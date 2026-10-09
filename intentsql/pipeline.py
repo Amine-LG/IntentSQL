@@ -20,8 +20,7 @@ from intentsql.compiler import CompileError, compile_query
 from intentsql.grounding import ground
 from intentsql.intent import Intent, PlanError, build_query, describe
 from intentsql.interpret import Decision, Strategy, alternatives, interpret
-from intentsql.jev import choice, noul
-from intentsql.jev import Exchange, JevClient, JevError, Usage, shared_client
+from intentsql.jev import Exchange, JevClient, JevError, Usage, choice, noul, shared_client
 from intentsql.schema import load_schema
 
 ANSWERED, AMBIGUOUS, REFUSED, ERROR = "answered", "ambiguous", "refused", "error"
@@ -127,7 +126,7 @@ def _short(value: Any) -> Any:
     return value[:60] if isinstance(value, str) else value
 
 
-def _verify(question: str, readings: list[_Reading], ask, result: "Answer") -> tuple[_Reading, float]:
+def _verify(question: str, readings: list[_Reading], ask, result: Answer) -> tuple[_Reading, float]:
     """Check the main reading against the request; compare with distinct alternatives.
 
     Returns the chosen reading and its verification probability.
@@ -159,7 +158,7 @@ def _verify(question: str, readings: list[_Reading], ask, result: "Answer") -> t
     pick = answers["pick"]
     scores = {letter: answers[f"verify_{letter}"].p or 0.0 for letter in letters}
     result.decisions.append(Decision("pick", "verification", "which interpretation",
-                                     {l: r.explanation for l, r in zip(letters, readings)},
+                                     {letter: r.explanation for letter, r in zip(letters, readings)},
                                      pick.choice, pick.top_probability, dict(pick.probabilities)))
     best = letters[0]
     candidate = pick.choice if pick.choice in letters else max(scores, key=lambda k: scores[k])
