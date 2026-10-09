@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from intentsql.benchmark.runner import ANSWERED, AMBIGUOUS, ERROR, REFUSED, Prediction
+from intentsql.benchmark.runner import AMBIGUOUS, ANSWERED, ERROR, REFUSED, Prediction
 from intentsql.interpret import Strategy
 
 _STATUS = {"answered": ANSWERED, "ambiguous": AMBIGUOUS, "refused": REFUSED, "error": ERROR}

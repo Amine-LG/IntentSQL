@@ -11,11 +11,10 @@ import difflib
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from intentsql.schema import NUMBER, TEXT, Column, Schema, quote_identifier
+from intentsql.schema import TEXT, Schema, quote_identifier
 from intentsql.text import NUMBER_WORDS, ORDINALS, STOPWORDS, Token, lemma, stem, tokenize
 
 _QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”|‘([^’]+)’|(?<![A-Za-z])'([^']+)'(?![A-Za-z])")
@@ -337,8 +336,8 @@ def link_scores(question: str, schema: Schema) -> tuple[dict[str, float], dict[s
     tokens = tokenize(question)
     lemmas = [stem(t.text) for t in tokens]
     positions: dict[str, int] = {}
-    for i, l in enumerate(lemmas):
-        positions.setdefault(l, tokens[i].start)
+    for i, word in enumerate(lemmas):
+        positions.setdefault(word, tokens[i].start)
     present = set(lemmas)
 
     def score(label: str) -> tuple[float, int | None]:

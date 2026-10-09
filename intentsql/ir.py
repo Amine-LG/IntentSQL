@@ -46,35 +46,35 @@ class Lit:
 @dataclass(frozen=True)
 class Agg:
     func: str
-    arg: "Expr"
+    arg: Expr
     distinct: bool = False
 
 
 @dataclass(frozen=True)
 class BinOp:
     op: str
-    left: "Expr"
-    right: "Expr"
+    left: Expr
+    right: Expr
 
 
 @dataclass(frozen=True)
 class Func:
     name: str
-    args: tuple["Expr", ...]
+    args: tuple[Expr, ...]
 
 
 @dataclass(frozen=True)
 class Case:
-    whens: tuple[tuple["Cond", "Expr"], ...]
-    otherwise: "Expr | None" = None
+    whens: tuple[tuple[Cond, Expr], ...]
+    otherwise: Expr | None = None
 
 
 @dataclass(frozen=True)
 class ScalarQuery:
-    query: "Query"
+    query: Query
 
 
-Expr = Union[Col, Star, Lit, Agg, BinOp, Func, Case, ScalarQuery]
+Expr = Union[Col, Star, Lit, Agg, BinOp, Func, Case, ScalarQuery]  # noqa: UP007 (forward references)
 
 
 # ---- conditions -------------------------------------------------------------------
@@ -104,13 +104,13 @@ class InList:
 @dataclass(frozen=True)
 class InQuery:
     expr: Expr
-    query: "Query"
+    query: Query
     negated: bool = False
 
 
 @dataclass(frozen=True)
 class Exists:
-    query: "Query"
+    query: Query
     negated: bool = False
 
 
@@ -129,20 +129,20 @@ class IsNull:
 
 @dataclass(frozen=True)
 class And:
-    items: tuple["Cond", ...]
+    items: tuple[Cond, ...]
 
 
 @dataclass(frozen=True)
 class Or:
-    items: tuple["Cond", ...]
+    items: tuple[Cond, ...]
 
 
 @dataclass(frozen=True)
 class Not:
-    item: "Cond"
+    item: Cond
 
 
-Cond = Union[Compare, Between, InList, InQuery, Exists, Like, IsNull, And, Or, Not]
+Cond = Union[Compare, Between, InList, InQuery, Exists, Like, IsNull, And, Or, Not]  # noqa: UP007 (forward references)
 
 
 # ---- queries ----------------------------------------------------------------------
@@ -198,13 +198,13 @@ class Select:
 @dataclass(frozen=True)
 class SetOp:
     op: str
-    left: "Query"
-    right: "Query"
+    left: Query
+    right: Query
     order_by: tuple[OrderItem, ...] = ()   # rejected by the compiler (not yet supported)
     limit: int | None = None
 
 
-Query = Union[Select, SetOp]
+Query = Union[Select, SetOp]  # noqa: UP007 (forward references)
 
 
 # ---- generic helpers --------------------------------------------------------------

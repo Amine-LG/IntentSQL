@@ -25,8 +25,15 @@ from intentsql.config import PROJECT_ROOT, settings
 from intentsql.jev import reset_shared_client, shared_client
 from intentsql.pipeline import answer
 from intentsql.schema import load_schema, quote_identifier
-from intentsql.workspace import (WorkspaceError, delete_database, import_bytes, import_path,
-                                 list_databases, resolve_database, save_connection)
+from intentsql.workspace import (
+    WorkspaceError,
+    delete_database,
+    import_bytes,
+    import_path,
+    list_databases,
+    resolve_database,
+    save_connection,
+)
 
 STATIC_DIR = PROJECT_ROOT / "static"
 CONSOLE_MAX_ROWS = 500

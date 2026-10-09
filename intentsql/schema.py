@@ -11,10 +11,10 @@ import re
 import sqlite3
 import threading
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Iterable
 
 from intentsql.text import humanize
 
@@ -455,7 +455,7 @@ def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:
                         f"LIMIT {VALUE_INDEX_LIMIT}"))
         tables[name] = Table(name, humanize(name), tuple(columns), pk, row_count)
         for row in conn.execute(f"PRAGMA foreign_key_list({qname})").fetchall():
-            fk_id, _, ref_table, from_col, to_col = row[0], row[1], row[2], row[3], row[4]
+            ref_table, from_col, to_col = row[2], row[3], row[4]
             raw_fks.append(ForeignKey(name, (from_col,), ref_table, (to_col,)))
     fks = _normalize_fks(tables, raw_fks)
     fks += _infer_foreign_keys(tables, fks)

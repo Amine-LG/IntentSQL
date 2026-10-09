@@ -18,13 +18,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import threading
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import httpx
 

@@ -11,14 +11,14 @@ import json
 import statistics
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from intentsql.benchmark.analysis import diagnose
-from intentsql.benchmark.exec_match import (execute, order_matters, results_equivalent,
-                                            set_equivalent)
+from intentsql.benchmark.exec_match import execute, order_matters, results_equivalent, set_equivalent
 from intentsql.benchmark.spider import Example, primary_category
 
 ANSWERED, REFUSED, AMBIGUOUS, ERROR = "answered", "refused", "ambiguous", "error"

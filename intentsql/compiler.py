@@ -12,9 +12,30 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from intentsql import ir
-from intentsql.ir import (Agg, And, Between, BinOp, Case, Col, Compare, Exists, Func, InList,
-                          InQuery, IsNull, Like, Lit, Not, Or, Query, ScalarQuery, Select, SetOp,
-                          Star, ValidationIssue)
+from intentsql.ir import (
+    Agg,
+    And,
+    Between,
+    BinOp,
+    Case,
+    Col,
+    Compare,
+    Exists,
+    Func,
+    InList,
+    InQuery,
+    IsNull,
+    Like,
+    Lit,
+    Not,
+    Or,
+    Query,
+    ScalarQuery,
+    Select,
+    SetOp,
+    Star,
+    ValidationIssue,
+)
 from intentsql.schema import NUMBER, Column, Schema
 
 _SIMPLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -64,7 +85,7 @@ def _display_literal(value: Any) -> str:
 @dataclass
 class _Scope:
     refs: dict[str, str]               # alias -> table name
-    parent: "_Scope | None" = None
+    parent: _Scope | None = None
 
     def resolve(self, alias: str) -> str | None:
         scope: _Scope | None = self

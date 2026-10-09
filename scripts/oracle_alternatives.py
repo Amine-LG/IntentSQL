@@ -1,7 +1,6 @@
 """How often is a one-flip alternative correct when the main interpretation is wrong?"""
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 

@@ -4,11 +4,15 @@ import unittest
 from pathlib import Path
 
 from intentsql.benchmark.analysis import diagnose
-from intentsql.benchmark.exec_match import (execute, normalize_rows, order_matters,
-                                            results_equivalent, set_equivalent)
+from intentsql.benchmark.exec_match import (
+    execute,
+    normalize_rows,
+    order_matters,
+    results_equivalent,
+    set_equivalent,
+)
 from intentsql.benchmark.runner import ANSWERED, REFUSED, Prediction, evaluate_case, summarize
-from intentsql.benchmark.spider import (Example, construct_tags, hardness, primary_category,
-                                        stratified_sample)
+from intentsql.benchmark.spider import Example, construct_tags, hardness, primary_category, stratified_sample
 
 
 class ResultEquivalenceTest(unittest.TestCase):

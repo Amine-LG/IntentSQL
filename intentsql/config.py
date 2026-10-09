@@ -7,6 +7,7 @@ Recognized variables (all optional):
 ``SYSTEM_ONE_MODEL``                              Model alias, default ``jev-latest``.
 ``INTENTSQL_JEV_CACHE``                           Directory for a development response cache.
 ``INTENTSQL_WORKSPACE``                           Where imported databases and settings live.
+``INTENTSQL_NO_DOTENV``                           Set to 1 to ignore ``.env`` files.
 
 Precedence: process environment, then settings saved from the web app's
 Connection dialog (``<workspace>/connection.json``), then a ``.env`` file in the
@@ -62,7 +63,9 @@ class Settings:
 @lru_cache(maxsize=1)
 def settings() -> Settings:
     file_values: dict[str, str] = {}
-    for candidate in (Path.cwd() / ".env", PROJECT_ROOT / ".env"):
+    dotenv = () if os.environ.get("INTENTSQL_NO_DOTENV") == "1" else (Path.cwd() / ".env",
+                                                                         PROJECT_ROOT / ".env")
+    for candidate in dotenv:
         if candidate.is_file():
             file_values = {**_read_env_file(candidate), **file_values}
 

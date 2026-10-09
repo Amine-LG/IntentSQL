@@ -10,9 +10,10 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from intentsql import ir
 from intentsql.compiler import CompileError, compile_query

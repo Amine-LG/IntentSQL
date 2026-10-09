@@ -16,10 +16,11 @@ import os
 import random
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SPLIT_FILES = {
     "train": ("train_spider.json", "database", "tables.json"),

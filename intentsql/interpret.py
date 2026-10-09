@@ -16,11 +16,12 @@ follow-up round instead of guessing.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from intentsql.grounding import Grounding, Literal
-from intentsql.intent import Condition, Intent, OutputItem, Ordering, column_phrase
+from intentsql.intent import Condition, Intent, Ordering, OutputItem, column_phrase, entity
 from intentsql.jev import Answer, Question, choice, noul
 from intentsql.schema import BOOLEAN, DATE, NUMBER, TEXT, Column, Schema
 from intentsql.text import ORDINALS
@@ -219,7 +220,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     for table in tables:
         if not schema.is_bridge(table):
             cands.counts.append(Option(f"t{len(cands.counts)}",
-                                       f"how many {schema.tables[table].label} records there are",
+                                       f"how many {entity(schema, table)} records there are",
                                        OutputItem("COUNT", None, table)))
     for column in columns:
         if column.kind in (TEXT, DATE, BOOLEAN) or (column.is_identifier and not column.primary_key):
@@ -228,7 +229,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                        OutputItem("COUNT", column.key, distinct=True)))
 
     if STAR_CUE.search(g.question):
-        cands.stars = [Option(f"w{i}", f"every attribute of the {schema.tables[t].label} records",
+        cands.stars = [Option(f"w{i}", f"every attribute of the {entity(schema, t)} records",
                               OutputItem(None, None, t, star=True))
                        for i, t in enumerate(t for t in tables if not schema.is_bridge(t))]
     if len(COUNT_CUE.findall(g.question)) >= 2:
@@ -281,7 +282,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         for column in columns:
             if column.is_numeric and not column.is_identifier:
                 phrase = column_phrase(schema, column.key)
-                label = schema.tables[column.table].label
+                label = entity(schema, column.table)
                 for op, word in ((">", "greater than"), ("<", "less than")):
                     for func, fword in (("AVG", "average"), ("MAX", "maximum"), ("MIN", "minimum")):
                         cands.vs_aggregate.append(Option(
@@ -331,10 +332,10 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
             if len(edges) >= 2:
                 opts = []
                 for fk in edges:
-                    child = schema.table(fk.table).label
+                    child = entity(schema, fk.table)
                     via = " and ".join(schema.table(fk.table).column(c).label for c in fk.columns)
                     opts.append(Option(f"j{len(opts)}",
-                                       f"the {schema.table(fk.ref_table).label} given by the {child}'s {via}",
+                                       f"the {entity(schema, fk.ref_table)} given by the {child}'s {via}",
                                        fk.key))
                 cands.joins["|".join(sorted((a, b)))] = opts
     return cands
@@ -349,7 +350,7 @@ def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) ->
 
     for table in cands.tables:
         if not schema.is_bridge(table):
-            label = schema.tables[table].label
+            label = entity(schema, table)
             add(f"by how many {label} records each result has, most first",
                 Ordering("COUNT", None, table, True))
             add(f"by how many {label} records each result has, fewest first",
@@ -447,7 +448,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
                  Option("other", "none of these (e.g. part of a name, an identifier inside text, "
                                  "or a column name such as '200 meters')", None)]
         ops = NUMERIC_OPS
-    count_tables = [Option(f"k{i}", f"how many {schema.tables[t].label} records", t)
+    count_tables = [Option(f"k{i}", f"how many {entity(schema, t)} records", t)
                     for i, t in enumerate(t for t in tables if not schema.is_bridge(t))]
     group_funcs = [Option(f, w, f) for f, w in AGG_FUNCS]
     return LiteralSlots(lit, roles, columns, dict(ops), count_tables, group_funcs,
@@ -465,12 +466,12 @@ def _state(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, Any
             if strategy.state_values and values and c.kind == TEXT and not c.is_identifier:
                 return f"{c.label} (e.g. {', '.join(repr(v) for v in values[:2])})"
             return c.label
-        state["database"] = {schema.tables[t].label: [label(c) for c in schema.tables[t].columns]
+        state["database"] = {entity(schema, t): [label(c) for c in schema.tables[t].columns]
                              for t in cands.tables}
     if strategy.state_relations:
         state["relationships"] = [
-            f"{schema.table(fk.table).label}.{schema.table(fk.table).column(fk.columns[0]).label} "
-            f"refers to {schema.table(fk.ref_table).label}"
+            f"{entity(schema, fk.table)}.{schema.table(fk.table).column(fk.columns[0]).label} "
+            f"refers to {entity(schema, fk.ref_table)}"
             for fk in schema.foreign_keys
             if fk.table in cands.tables and fk.ref_table in cands.tables]
     return state
@@ -552,7 +553,7 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
             f"Does `request` itself restrict the results to one particular {phrase}? "
             "Choose a value only when the request states that restriction.", opts)
     for key, subject, target in cands.relations:
-        s_label, t_label = schema.tables[subject].label, schema.tables[target].label
+        s_label, t_label = entity(schema, subject), entity(schema, target)
         q[f"rel_{key}"] = choice(
             f"Does `request` restrict {s_label} records by whether they have related {t_label} records?",
             {"none": "no such restriction",
@@ -588,7 +589,7 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
     for pair, options in cands.joins.items():
         a, b = pair.split("|")
         q[f"join_{pair}"] = choice(
-            f"If `request` relates {schema.table(a).label} and {schema.table(b).label}, which "
+            f"If `request` relates {entity(schema, a)} and {entity(schema, b)}, which "
             "relationship does it mean?", {o.key: o.text for o in options})
     return q
 
@@ -1002,7 +1003,7 @@ def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, An
 
 def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list[str],
                        answers: dict[str, Answer], followup: dict[str, Question],
-                       record: "_Recorder") -> list[OutputItem]:
+                       record: _Recorder) -> list[OutputItem]:
     """A count and a total of the same records ('the total number of students') are
     usually one request read twice: ask which one is meant."""
     count = next((o for o in outputs if o.func == "COUNT" and o.column is None), None)
@@ -1014,7 +1015,7 @@ def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list
         phrase = column_phrase(schema, total.column)
         followup[key] = choice(
             "Which does `request` ask for?",
-            {"count": f"how many {schema.table(count.table).label} records there are",
+            {"count": f"how many {entity(schema, count.table)} records there are",
              "sum": f"the total {phrase} (adding up the stored values)",
              "both": "both of these, as two separate values"})
         return outputs
@@ -1028,7 +1029,7 @@ def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list
 
 
 def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
-                   followup: dict[str, Question], record: "_Recorder") -> Intent:
+                   followup: dict[str, Question], record: _Recorder) -> Intent:
     """When two needed tables are connected by different routes of equal length
     (instructor-student via advisor or via department), the route is a meaning: use
     the one the request names, otherwise ask."""
@@ -1052,12 +1053,12 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
                 via.extend(named[0])
                 continue
             key = f"route_{a}|{b}"
-            options = {f"p{k}": (f"{schema.table(a).label} and {schema.table(b).label} related through "
-                                 + " and ".join(schema.table(t).label for t in route))
+            options = {f"p{k}": (f"{entity(schema, a)} and {entity(schema, b)} related through "
+                                 + " and ".join(entity(schema, t) for t in route))
                        for k, route in enumerate(routes_list)}
             if key not in answers:
                 followup[key] = choice(
-                    f"How does `request` relate {schema.table(a).label} and {schema.table(b).label}?",
+                    f"How does `request` relate {entity(schema, a)} and {entity(schema, b)}?",
                     options)
                 continue
             answer = answers[key]
@@ -1301,7 +1302,7 @@ def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
 
 # ---- entry point -------------------------------------------------------------------------
 
-def _ask_debiased(ask: "AskFn", state: dict[str, Any], questions: dict[str, Question]
+def _ask_debiased(ask: AskFn, state: dict[str, Any], questions: dict[str, Question]
                   ) -> dict[str, Answer]:
     """Ask every multi-option Choice also with its options reversed; average the two
     distributions to cancel Jev's documented lean toward the first option."""

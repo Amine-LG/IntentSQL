@@ -71,7 +71,7 @@ class Condition:
     negated: bool = False
     func: str | None = None
     table: str | None = None
-    inner: tuple["Condition", ...] = ()
+    inner: tuple[Condition, ...] = ()
 
     @property
     def tables(self) -> tuple[str, ...]:
@@ -112,11 +112,16 @@ class Intent:
     subject: str | None = None
     join_choices: tuple[tuple[str, str], ...] = ()   # (table pair key, fk key) disambiguations
 
-    def with_(self, **changes: Any) -> "Intent":
+    def with_(self, **changes: Any) -> Intent:
         return replace(self, **changes)
 
 
 # ---- English rendering ------------------------------------------------------------
+
+def entity(schema: Schema, table: str) -> str:
+    """Singular entity name of a table: 'customers' -> 'customer'."""
+    return " ".join(lemma(w) for w in schema.table(table).label.split())
+
 
 def column_phrase(schema: Schema, key: str) -> str:
     """Readable name of a column in its table: 'district name', 'per pupil expenditure'.
@@ -126,21 +131,21 @@ def column_phrase(schema: Schema, key: str) -> str:
     """
     column = schema.column(key)
     table = schema.table(column.table)
-    entity = " ".join(lemma(w) for w in table.label.split())
+    name = entity(schema, table.name)
     label_lemmas = [lemma(w) for w in column.label.split()]
-    entity_lemmas = entity.split()
+    entity_lemmas = name.split()
     if label_lemmas[: len(entity_lemmas)] == entity_lemmas:
         return column.label                      # 'singer name' in table singer
     # Keeping the entity on every phrase measurably helps Jev tell tables apart
     # (dropping it cost ~2 points on Spider train), even when slightly redundant.
-    return f"{entity} {column.label}"
+    return f"{name} {column.label}"
 
 
 def describe_output(schema: Schema, item: OutputItem) -> str:
     if item.star:
-        return f"all attributes of the {schema.table(item.table).label} records"
+        return f"all attributes of the {entity(schema, item.table)} records"
     if item.column is None:
-        return f"the number of {schema.table(item.table).label} records"
+        return f"the number of {entity(schema, item.table)} records"
     phrase = column_phrase(schema, item.column)
     if item.func is None:
         return f"the {phrase}"
@@ -155,17 +160,17 @@ def _value(v: Any) -> str:
 
 def describe_condition(schema: Schema, cond: Condition, subject: str | None = None) -> str:
     if cond.kind == "related":
-        return f"has related {schema.table(cond.table).label} records"
+        return f"has related {entity(schema, cond.table)} records"
     if cond.kind == "same_as":
         inner = " and ".join(describe_condition(schema, c) for c in cond.inner)
         return f"{column_phrase(schema, cond.column)} is the same as for the records where {inner}"
     if cond.kind == "absent":
         inner = " and ".join(describe_condition(schema, c) for c in cond.inner)
-        what = schema.table(cond.table).label
+        what = entity(schema, cond.table)
         base = f"has no related {what} records"
         return base + (f" where {inner}" if inner else "")
     if cond.kind == "having":
-        target = (f"the number of {schema.table(cond.table).label} records" if not cond.column
+        target = (f"the number of {entity(schema, cond.table)} records" if not cond.column
                   else f"the {FUNC_WORDS[cond.func or 'COUNT']} {column_phrase(schema, cond.column)}")
         return f"{target} per group {OP_WORDS[cond.op]} {_value(cond.values[0])}"
     phrase = column_phrase(schema, cond.column) if cond.column else "?"

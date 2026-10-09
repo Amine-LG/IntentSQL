@@ -13,10 +13,11 @@ import math
 import sqlite3
 import threading
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from itertools import permutations, product
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 Row = tuple[Any, ...]
 
