@@ -76,8 +76,10 @@ class ScriptedJev:
             if spec is not None:
                 return self._apply(question, spec)
         if question.kind == "noul":
-            return Answer("noul", p=0.0)
+            return Answer("noul", p=0.95 if key.startswith("verify") else 0.0)
         options = question.options or {}
+        if key == "pick":
+            return self._choice(options, "A")
         for default in ("none", "no", "unordered", "all", "other"):
             if default in options:
                 return self._choice(options, default)

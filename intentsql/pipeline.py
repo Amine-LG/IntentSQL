@@ -18,14 +18,20 @@ from typing import Any
 from intentsql import ir
 from intentsql.compiler import CompileError, compile_query
 from intentsql.grounding import ground
-from intentsql.intent import PlanError, build_query, describe
-from intentsql.interpret import Decision, Strategy, interpret
+from intentsql.intent import Intent, PlanError, build_query, describe
+from intentsql.interpret import Decision, Strategy, alternatives, interpret
+from intentsql.jev import choice, noul
 from intentsql.jev import Exchange, JevClient, JevError, Usage, shared_client
 from intentsql.schema import load_schema
 
 ANSWERED, AMBIGUOUS, REFUSED, ERROR = "answered", "ambiguous", "refused", "error"
 MAX_ROWS = 1000
 QUERY_TIMEOUT_S = 15.0
+PREVIEW_ROWS = 200
+LOW_CONFIDENCE = 0.2      # verification probability under which a reading is reported as uncertain
+SWITCH_MARGIN = 0.25      # an alternative replaces the main reading only by this probability margin
+VERIFY_QUESTION = ("Does `interpretation` describe exactly what `request` asks for, with nothing "
+                   "missing, nothing extra and the same conditions? `result` shows what it returned.")
 
 
 @dataclass
@@ -43,6 +49,7 @@ class Answer:
     alternatives: list[dict[str, Any]] = field(default_factory=list)
     plan: dict[str, Any] | None = None
     intent: dict[str, Any] | None = None
+    confidence: float | None = None
     decisions: list[Decision] = field(default_factory=list)
     exchanges: list[Exchange] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
@@ -55,6 +62,7 @@ class Answer:
             "explanation": self.explanation, "columns": self.columns,
             "rows": [list(r) for r in self.rows], "truncated": self.truncated,
             "message": self.message, "alternatives": self.alternatives,
+            "confidence": self.confidence,
             "usage": self.usage.as_dict(), "timings_ms": self.timings_ms,
         }
         if debug:
@@ -83,6 +91,83 @@ def execute_read(db_path: str | Path, sql: str, params: tuple[Any, ...], *,
     finally:
         timer.cancel()
         conn.close()
+
+
+@dataclass
+class _Reading:
+    origin: str
+    intent: Intent
+    explanation: str = ""
+    query: Any = None
+    compiled: Any = None
+    columns: list[str] = field(default_factory=list)
+    preview: list[tuple[Any, ...]] = field(default_factory=list)
+    error: str | None = None
+
+
+def _realize(schema, db_path: str | Path, intent: Intent, origin: str) -> _Reading:
+    reading = _Reading(origin, intent)
+    try:
+        reading.explanation = describe(schema, intent)
+        reading.query = build_query(schema, intent)
+        reading.compiled = compile_query(reading.query, schema)
+        reading.columns, reading.preview, _ = execute_read(
+            db_path, reading.compiled.sql, reading.compiled.params, max_rows=PREVIEW_ROWS)
+    except (PlanError, CompileError, sqlite3.Error) as exc:
+        reading.error = str(exc)
+    return reading
+
+
+def _evidence(reading: _Reading) -> dict[str, Any]:
+    return {"row_count": len(reading.preview) if len(reading.preview) < PREVIEW_ROWS else f"{PREVIEW_ROWS}+",
+            "first_rows": [[_short(v) for v in row] for row in reading.preview[:3]]}
+
+
+def _short(value: Any) -> Any:
+    return value[:60] if isinstance(value, str) else value
+
+
+def _verify(question: str, readings: list[_Reading], ask, result: "Answer") -> tuple[_Reading, float]:
+    """Check the main reading against the request; compare with distinct alternatives.
+
+    Returns the chosen reading and its verification probability.
+    """
+    main = readings[0]
+    letters = [chr(ord("A") + i) for i in range(len(readings))]
+    state: dict[str, Any] = {"request": question}
+    questions: dict[str, Any] = {}
+    if len(readings) == 1:
+        state.update(interpretation=main.explanation, result=_evidence(main))
+        questions["verify"] = noul(VERIFY_QUESTION)
+    else:
+        state["interpretations"] = {letter: {"meaning": r.explanation, "result": _evidence(r)}
+                                    for letter, r in zip(letters, readings)}
+        for letter in letters:
+            questions[f"verify_{letter}"] = noul(
+                {"question": f"Does interpretation {letter} in `interpretations` describe exactly what "
+                             "`request` asks for, with nothing missing, nothing extra and the same "
+                             "conditions?"})
+        questions["pick"] = choice(
+            "Which interpretation in `interpretations` answers `request` exactly?",
+            {**{letter: f"interpretation {letter}" for letter in letters},
+             "none": "none of them answers the request"})
+    answers = ask(state, questions, "verification")
+    if len(readings) == 1:
+        p = answers["verify"].p or 0.0
+        result.decisions.append(Decision("verify", "verification", main.explanation, None, "main", p))
+        return main, p
+    pick = answers["pick"]
+    scores = {letter: answers[f"verify_{letter}"].p or 0.0 for letter in letters}
+    result.decisions.append(Decision("pick", "verification", "which interpretation",
+                                     {l: r.explanation for l, r in zip(letters, readings)},
+                                     pick.choice, pick.top_probability, dict(pick.probabilities)))
+    best = letters[0]
+    candidate = pick.choice if pick.choice in letters else max(scores, key=lambda k: scores[k])
+    if candidate != best and (pick.probabilities.get(candidate, 0) - pick.probabilities.get(best, 0)
+                              >= SWITCH_MARGIN) and scores[candidate] >= scores[best]:
+        best = candidate
+    chosen = readings[letters.index(best)]
+    return chosen, scores[best]
 
 
 def answer(db_path: str | Path, question: str, *, client: JevClient | None = None,
@@ -118,37 +203,74 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
                           purpose=purpose)
 
     try:
-        interpretation, _ = interpret(grounding, ask, strategy)
+        interpretation, cands = interpret(grounding, ask, strategy)
     except JevError as exc:
         result.message = str(exc)
         return result
     t = mark("interpret", t)
     result.decisions = interpretation.decisions
-    intent = interpretation.intent
-    if intent is None:
+    if interpretation.intent is None:
         result.status, result.message = REFUSED, interpretation.message
         return result
-    result.intent = ir.to_dict(intent)
-    result.explanation = describe(schema, intent)
-    try:
-        query = build_query(schema, intent)
-        compiled = compile_query(query, schema)
-    except (PlanError, CompileError) as exc:
-        result.status = REFUSED
-        result.message = f"No valid query could be built: {exc}"
-        return result
-    result.plan = ir.to_dict(query)
-    result.sql, result.params, result.display_sql = compiled.sql, compiled.params, compiled.display_sql
+
+    # Build, compile and execute the main reading and its one-flip alternatives.
+    readings: list[_Reading] = []
+    seen_results: list[tuple] = []
+    flips = [("main", interpretation.intent)]
+    if strategy is None or strategy.verify:
+        flips += alternatives(grounding, cands, interpretation, strategy)
+    failure = None
+    for origin, intent in flips:
+        reading = _realize(schema, db_path, intent, origin)
+        if reading.error:
+            failure = failure or reading.error
+            continue
+        signature = (tuple(reading.columns), tuple(sorted(map(repr, reading.preview))))
+        if signature in seen_results:
+            continue                      # same result as an earlier reading: not a real alternative
+        seen_results.append(signature)
+        readings.append(reading)
     t = mark("compile", t)
+    if not readings:
+        result.status = REFUSED
+        result.message = f"No valid query could be built: {failure}"
+        return result
+
+    chosen = readings[0]
+    if strategy is None or strategy.verify:
+        try:
+            chosen, confidence = _verify(question, readings, ask, result)
+        except JevError as exc:
+            result.message = str(exc)
+            return result
+        result.confidence = confidence
+        t = mark("verify", t)
+
+    result.intent = ir.to_dict(chosen.intent)
+    result.explanation = chosen.explanation
+    result.plan = ir.to_dict(chosen.query)
+    result.sql, result.params, result.display_sql = (chosen.compiled.sql, chosen.compiled.params,
+                                                     chosen.compiled.display_sql)
+    result.alternatives = [{"explanation": r.explanation, "sql": r.compiled.sql,
+                            "display_sql": r.compiled.display_sql, "params": list(r.compiled.params),
+                            "columns": r.columns, "rows": [list(x) for x in r.preview],
+                            "origin": r.origin}
+                           for r in readings if r is not chosen]
     if execute:
         try:
             result.columns, result.rows, result.truncated = execute_read(
-                db_path, compiled.sql, compiled.params)
+                db_path, chosen.compiled.sql, chosen.compiled.params)
         except sqlite3.Error as exc:
             result.status = ERROR
             result.message = f"SQLite rejected the query: {exc}"
             return result
         mark("execute", t)
+    if result.confidence is not None and result.confidence < LOW_CONFIDENCE:
+        result.status = AMBIGUOUS
+        result.message = ("This reading is uncertain. Check the interpretation"
+                          + (" or pick one of the alternatives below." if result.alternatives else "."))
+        timings["total"] = round((time.monotonic() - started) * 1000)
+        return result
     result.status = ANSWERED
     timings["total"] = round((time.monotonic() - started) * 1000)
     return result

@@ -139,6 +139,8 @@ class Strategy:
     debias_order: bool = False          # ask each Choice twice with reversed options
     state_values: bool = False          # sample stored values in the schema description
     state_relations: bool = False       # list FK relationships in the state
+    output_phrase: bool = False         # ask output questions against the extracted 'asked for' phrase
+    verify: bool = True                 # verification round: check the reading, compare alternatives
 
 
 # ---- scope ---------------------------------------------------------------------------
@@ -457,9 +459,39 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
 
 # ---- questions ---------------------------------------------------------------------------
 
+_LEAD = re.compile(
+    r"^(?:(?:please|kindly|can you|could you|would you|i (?:want|need|would like) to (?:know|see))[,\s]+)*"
+    r"(?:(?:what|which|who|whom)\s+(?:is|are|was|were|'s)\s+|"
+    r"(?:show|list|find|give|return|display|tell|get|print|report|retrieve|select|identify|provide|output)"
+    r"\s+(?:me\s+|us\s+)?(?:all\s+)?|(?:what|which|who|whose)\s+)", re.I)
+_BOUNDARY = re.compile(
+    r"\b(who|that|which|whose|where|when|whom|with|without|having|has|have|had|from|in|on|at|for|"
+    r"ordered|sorted|order|sort|by|than|between|if|after|before|during|whereas|located|born|is|are|"
+    r"was|were|do|does|did)\b|[?.;,]\s*(?:and\s+)?(?:sort|order|list|show)", re.I)
+
+
+def asked_for(question: str) -> str:
+    """The part of a request naming what to return ('the names and ages of singers')."""
+    text = question.strip()
+    match = _LEAD.match(text)
+    rest = text[match.end():] if match else text
+    words = rest.split()
+    # Skip a leading article/quantifier, then cut at the first clause boundary
+    # that follows at least one content word.
+    cut = len(rest)
+    for boundary in _BOUNDARY.finditer(rest):
+        if boundary.start() > 0 and rest[:boundary.start()].strip():
+            cut = boundary.start()
+            break
+    phrase = re.sub(r"\s+(and|or|then)$", "", rest[:cut].strip(" ,?."), flags=re.I)
+    return phrase if phrase and len(phrase) < len(text) and words else question
+
+
 def _state(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, Any]:
     schema = g.schema
     state: dict[str, Any] = {"request": g.question}
+    if strategy.output_phrase:
+        state["asked_for"] = asked_for(g.question)
     if strategy.include_schema_in_state:
         def label(c: Column) -> str:
             values = schema.values.get(c.key, ())
@@ -492,9 +524,14 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
         hint = (" An identifier or code is shown only when the request asks for the id, code or "
                 "number itself, not when it merely mentions the record."
                 if schema.is_key(group.options[0].payload.column) else "")
-        q[f"out_{group.key}"] = choice(
-            f"Does `request` ask to show the {group.phrase} in the results? If so, in which form?"
-            + hint, opts)
+        if strategy.output_phrase:
+            q[f"out_{group.key}"] = choice(
+                f"Is the {group.phrase} one of the things named in `asked_for` (the part of `request` "
+                "that says what to return)? If so, in which form?" + hint, opts)
+        else:
+            q[f"out_{group.key}"] = choice(
+                f"Does `request` ask to show the {group.phrase} in the results? If so, in which form?"
+                + hint, opts)
     if cands.stars:
         q["star"] = choice(
             "Does `request` ask for all information (every attribute) of some records? If so, "

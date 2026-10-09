@@ -9,7 +9,7 @@ offline exactly as they run in production.
 import tempfile
 import unittest
 
-from intentsql.pipeline import ANSWERED, REFUSED, answer
+from intentsql.pipeline import AMBIGUOUS, ANSWERED, REFUSED, answer
 from tests.fakes import ScriptedJev, make_shop
 
 SHOW = "itself"          # output form option: "the X itself (one value per result row)"
@@ -153,8 +153,35 @@ class ScenarioTest(unittest.TestCase):
         jev = ScriptedJev([("^main_output$", "", "^the customer name itself")])
         result = answer(self.db, "customers please", client=jev)
         self.assertEqual(result.status, ANSWERED)
-        self.assertEqual(len(jev.asked), 2)           # round one + one targeted follow-up
+        self.assertEqual(len(jev.asked), 3)           # round one, a targeted follow-up, verification
         self.assertEqual(len(result.rows), 5)
+
+
+    def test_low_verification_is_reported_as_uncertain(self):
+        jev = ScriptedJev([("^out_", "customer name in", SHOW), ("^verify", "", 0.05)])
+        result = answer(self.db, "What are the customer names?", client=jev)
+        self.assertEqual(result.status, AMBIGUOUS)
+        self.assertLess(result.confidence, 0.2)
+        self.assertEqual(len(result.rows), 5)          # the best reading is still shown
+
+    def test_clearly_better_alternative_replaces_the_main_reading(self):
+        class Narrow(ScriptedJev):
+            def answer(self, key, question):
+                from intentsql.jev import Answer
+                if key.startswith("role_"):
+                    opts = list(question.options)
+                    probs = {k: 0.0 for k in opts}
+                    probs["value"], probs["other"] = 0.55, 0.45
+                    return Answer("choice", "value", probs, 0.1)
+                if key == "pick":
+                    return self._choice(question.options, "B")
+                return super().answer(key, question)
+
+        jev = Narrow([("^count$", "", "how many order records")])
+        result = answer(self.db, "How many orders are paid?", client=jev)
+        self.assertEqual(result.status, ANSWERED)
+        self.assertEqual(rows(result), [(5,)])          # alternative B: no status filter
+        self.assertEqual(len(result.alternatives), 1)
 
 
 if __name__ == "__main__":

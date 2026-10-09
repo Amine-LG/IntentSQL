@@ -36,6 +36,7 @@ class Prediction:
     retries: int = 0
     latency_ms: int = 0
     trace: Any = None
+    confidence: float | None = None
 
 
 System = Callable[[Path, str], Prediction]
@@ -64,6 +65,7 @@ class CaseResult:
     retries: int = 0
     latency_ms: int = 0
     trace: Any = None
+    confidence: float | None = None
 
 
 def evaluate_case(example: Example, prediction: Prediction, *, redact: bool = False,
@@ -73,7 +75,7 @@ def evaluate_case(example: Example, prediction: Prediction, *, redact: bool = Fa
     errors: list[str] = []
     if reference.error:
         errors.append("reference_error")
-    if prediction.status == ANSWERED and prediction.sql:
+    if prediction.status in (ANSWERED, AMBIGUOUS) and prediction.sql:
         predicted = execute(example.db_path, prediction.sql, prediction.params)
         executable = predicted.error is None
         if not executable:
@@ -84,7 +86,7 @@ def evaluate_case(example: Example, prediction: Prediction, *, redact: bool = Fa
             set_correct = correct or set_equivalent(reference.rows, predicted.rows)
             if not correct:
                 errors.extend(diagnose(example.query, prediction.sql))
-    elif prediction.status != ANSWERED:
+    if prediction.status != ANSWERED:
         errors.append(prediction.status)
     return CaseResult(
         key=example.key, db_id=example.db_id, hardness=example.hardness,
@@ -99,7 +101,8 @@ def evaluate_case(example: Example, prediction: Prediction, *, redact: bool = Fa
         jev_calls=prediction.jev_calls, input_tokens=prediction.input_tokens,
         output_tokens=prediction.output_tokens, retries=prediction.retries,
         latency_ms=prediction.latency_ms,
-        trace=prediction.trace if keep_trace and not redact else None)
+        trace=prediction.trace if keep_trace and not redact else None,
+        confidence=prediction.confidence)
 
 
 def _safe_predict(system: System, example: Example) -> Prediction:
@@ -142,18 +145,33 @@ def _percentile(values: list[int], q: float) -> int | None:
     return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
 
 
+def _coverage_curve(cases: list[CaseResult]) -> dict[str, float] | None:
+    """Accuracy when answering only the most confident fraction of requests."""
+    scored = [c for c in cases if c.confidence is not None]
+    if len(scored) < 10:
+        return None
+    ranked = sorted(scored, key=lambda c: -(c.confidence or 0.0))
+    curve = {}
+    for coverage in (1.0, 0.9, 0.8, 0.7, 0.6, 0.5):
+        kept = ranked[:max(1, round(coverage * len(ranked)))]
+        curve[f"{coverage:.0%}"] = round(sum(c.correct for c in kept) / len(kept), 4)
+    return curve
+
+
 def summarize(cases: Iterable[CaseResult]) -> dict[str, Any]:
     cases = list(cases)
     n = len(cases)
     answered = [c for c in cases if c.status == ANSWERED]
     correct = sum(c.correct for c in cases)
+    confident_correct = sum(c.correct for c in answered)
     summary: dict[str, Any] = {
         "cases": n,
         "execution_accuracy": _rate(correct, n),
         "set_accuracy": _rate(sum(c.set_correct for c in cases), n),
         "answered_rate": _rate(len(answered), n),
-        "accuracy_when_answered": _rate(correct, len(answered)),
+        "accuracy_when_answered": _rate(confident_correct, len(answered)),
         "wrong_answer_rate": _rate(sum(not c.correct for c in answered), n),
+        "accuracy_by_coverage": _coverage_curve(cases),
         "refused": sum(c.status == REFUSED for c in cases),
         "ambiguous": sum(c.status == AMBIGUOUS for c in cases),
         "system_errors": sum(c.status == ERROR for c in cases),
@@ -176,7 +194,7 @@ def summarize(cases: Iterable[CaseResult]) -> dict[str, Any]:
                   "execution_accuracy": _rate(sum(c.correct for c in group), len(group)),
                   "answered": sum(c.status == ANSWERED for c in group),
                   "accuracy_when_answered": _rate(
-                      sum(c.correct for c in group),
+                      sum(c.correct for c in group if c.status == ANSWERED),
                       sum(c.status == ANSWERED for c in group))}
             for key, group in sorted(groups.items())}
     return summary
