@@ -249,42 +249,55 @@ class Schema:
         return steps
 
     @cached_property
-    def _classes(self) -> dict[str, tuple[str, ...]]:
-        """Columns holding the same value through FK links (child -> parent chains)."""
-        parent: dict[str, str] = {}
-
-        def find(key: str) -> str:
-            while parent.get(key, key) != key:
-                key = parent[key]
-            return key
-
+    def _parents(self) -> dict[str, list[str]]:
+        parents: dict[str, list[str]] = {}
         for fk in self.foreign_keys:
+            if fk.table == fk.ref_table:
+                continue
             for column, ref in zip(fk.columns, fk.ref_columns):
-                a, b = find(f"{fk.table}.{column}"), find(f"{fk.ref_table}.{ref}")
-                if a != b:
-                    parent[a] = b
-        groups: dict[str, list[str]] = {}
-        for column in self.columns:
-            groups.setdefault(find(column.key), []).append(column.key)
-        return {key: tuple(members) for members in groups.values() for key in members}
+                parents.setdefault(f"{fk.table}.{column}", []).append(f"{fk.ref_table}.{ref}")
+        return parents
+
+    @cached_property
+    def _children(self) -> dict[str, list[str]]:
+        children: dict[str, list[str]] = {}
+        for child, parents in self._parents.items():
+            for parent in parents:
+                children.setdefault(parent, []).append(child)
+        return children
 
     def equivalents(self, key: str) -> tuple[str, ...]:
-        """All columns that store the same values as ``key`` via foreign keys."""
-        return self._classes.get(key, (key,))
+        """Columns holding the same value *for joined rows*: FK ancestors and descendants.
+
+        Siblings are excluded: student.dept_name and course.dept_name both reference
+        department.dept_name, but a student's department is not a course's department.
+        """
+        out = [key]
+        stack = [key]
+        while stack:                      # ancestors
+            for parent in self._parents.get(stack.pop(), ()):
+                if parent not in out:
+                    out.append(parent)
+                    stack.append(parent)
+        stack = [key]
+        while stack:                      # descendants
+            for child in self._children.get(stack.pop(), ()):
+                if child not in out:
+                    out.append(child)
+                    stack.append(child)
+        return tuple(out)
 
     def canonical(self, key: str) -> str:
-        """Representative of an equivalence class: the referenced key column if any."""
-        members = self.equivalents(key)
-        if len(members) == 1:
-            return key
-        referenced = {f"{fk.ref_table}.{c}" for fk in self.foreign_keys for c in fk.ref_columns}
-        for member in members:
-            if member in referenced and self.column(member).primary_key:
-                return member
-        for member in members:
-            if member in referenced:
-                return member
-        return members[0]
+        """The topmost referenced ancestor of ``key`` (itself when not an FK column)."""
+        current = key
+        seen = {key}
+        while self._parents.get(current):
+            nxt = self._parents[current][0]
+            if nxt in seen:
+                break
+            seen.add(nxt)
+            current = nxt
+        return current
 
     def parallel_edges(self, a: str, b: str) -> list[ForeignKey]:
         return [fk for fk in self.edges(a) if fk.other(a) == b]

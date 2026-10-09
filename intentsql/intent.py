@@ -33,6 +33,7 @@ class OutputItem:
     column: str | None = None        # "table.column"; None means COUNT(*) of ``table``
     table: str | None = None
     distinct: bool = False           # COUNT(DISTINCT column)
+    star: bool = False               # every column of ``table`` ("all information about ...")
 
     @property
     def is_aggregate(self) -> bool:
@@ -57,6 +58,7 @@ class Condition:
     absent       subject has no related ``table`` rows (matching ``inner``)
     related      subject has related ``table`` rows (semi-join: IN, no row multiplication)
     same_as      column equals that of the record(s) matching ``inner`` ("same department as Clara")
+    having_vs    func(column) per group op the overall func(column) of its table
     vs_aggregate column op func(agg_column) over all rows of its table
     having       func(column or COUNT(*) of table) op values[0], per group
     """
@@ -104,6 +106,7 @@ class Intent:
     distinct: bool = False
     both: tuple[int, int] | None = None   # indexes of two conditions that must hold via different related rows
     excluded: tuple[Condition, ...] = ()  # results matching these are removed (EXCEPT)
+    via: tuple[str, ...] = ()             # tables a join path must pass through (chosen route)
     subject: str | None = None
     join_choices: tuple[tuple[str, str], ...] = ()   # (table pair key, fk key) disambiguations
 
@@ -124,6 +127,8 @@ def column_phrase(schema: Schema, key: str) -> str:
 
 
 def describe_output(schema: Schema, item: OutputItem) -> str:
+    if item.star:
+        return f"all attributes of the {schema.table(item.table).label} records"
     if item.column is None:
         return f"the number of {schema.table(item.table).label} records"
     phrase = column_phrase(schema, item.column)
@@ -163,6 +168,10 @@ def describe_condition(schema: Schema, cond: Condition, subject: str | None = No
         return f"{phrase} is {'not ' if cond.negated else ''}one of {values}"
     if cond.kind == "null":
         return f"{phrase} is {'present' if cond.negated else 'missing (null)'}"
+    if cond.kind == "having_vs":
+        word = FUNC_WORDS[cond.func or 'AVG']
+        return (f"the {word} {phrase} per group {OP_WORDS[cond.op]} the {word} {phrase} "
+                f"of all {schema.table(cond.column.split('.')[0]).label} records")
     if cond.kind == "vs_aggregate":
         return (f"{phrase} {OP_WORDS[cond.op]} the {FUNC_WORDS[cond.func or 'AVG']} "
                 f"{column_phrase(schema, cond.column)} of all {schema.table(cond.column.split('.')[0]).label} records")
@@ -172,17 +181,17 @@ def describe_condition(schema: Schema, cond: Condition, subject: str | None = No
 def describe(schema: Schema, intent: Intent) -> str:
     outputs = ", ".join(describe_output(schema, o) for o in intent.outputs)
     text = f"Return {'distinct values of ' if intent.distinct else ''}{outputs}"
-    group = _effective_groups(intent)
+    group = _effective_groups(intent, schema)
     if group:
         text += " for each " + " and ".join(column_phrase(schema, g) for g in group)
-    where = [c for c in intent.conditions if c.kind != "having"]
+    where = [c for c in intent.conditions if c.kind not in ("having", "having_vs")]
     if intent.excluded:
         text += ", excluding those where " + " and ".join(
             describe_condition(schema, c) for c in intent.excluded)
     if where:
         joiner = " and " if intent.connector == "AND" else " or "
         text += " where " + joiner.join(describe_condition(schema, c) for c in where)
-    having = [c for c in intent.conditions if c.kind == "having"]
+    having = [c for c in intent.conditions if c.kind in ("having", "having_vs")]
     if having:
         text += ", keeping only groups where " + " and ".join(
             describe_condition(schema, c) for c in having)
@@ -203,16 +212,33 @@ def describe(schema: Schema, intent: Intent) -> str:
 
 # ---- building IR ------------------------------------------------------------------
 
-def _effective_groups(intent: Intent) -> tuple[str, ...]:
+def _effective_groups(intent: Intent, schema: Schema | None = None) -> tuple[str, ...]:
+    """Explicit groups, or the groups implied by mixing plain values with aggregates.
+
+    When the plain values describe individual records of one table (a name, a title),
+    the group is that record: group by its primary key, so two airports that share a
+    name are not merged.  Categorical values (a country) group by the value itself.
+    """
     if intent.group_by:
         return intent.group_by
     has_agg = (any(o.is_aggregate for o in intent.outputs)
                or any(o.is_aggregate for o in intent.order)
-               or any(c.kind == "having" for c in intent.conditions))
-    plain = tuple(o.column for o in intent.outputs if not o.is_aggregate and o.column)
-    if has_agg and plain:
-        return tuple(dict.fromkeys(plain))
-    return ()
+               or any(c.kind in ("having", "having_vs") for c in intent.conditions))
+    plain = tuple(dict.fromkeys(o.column for o in intent.outputs if not o.is_aggregate and o.column))
+    if not (has_agg and plain):
+        return ()
+    if schema is not None:
+        tables = {key.split(".", 1)[0] for key in plain}
+        if len(tables) == 1:
+            table = schema.table(next(iter(tables)))
+            identifying = any(
+                (c := schema.column(k)).primary_key or (
+                    c.distinct_count and table.row_count > 1
+                    and c.distinct_count >= 0.9 * table.row_count)
+                for k in plain)
+            if identifying and len(table.primary_key) == 1:
+                return (f"{table.name}.{table.primary_key[0]}",)
+    return plain
 
 
 @dataclass
@@ -276,6 +302,13 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "having":
         expr = _agg_expr(scope, cond.func, cond.column, cond.table)
         return ir.Compare(expr, cond.op, ir.Lit(cond.values[0]))
+    if cond.kind == "having_vs":
+        counter[0] += 1
+        table = cond.column.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
+                        from_=inner_from)
+        return ir.Compare(ir.Agg(cond.func or "AVG", scope.col(cond.column)), cond.op, ir.ScalarQuery(sub))
     if cond.kind == "vs_aggregate":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
@@ -323,6 +356,33 @@ def _membership(schema: Schema, scope: _Scope, cond: Condition, counter: list[in
     return ir.InQuery(ir.Col(scope.alias(subject), subject_col), sub, negated=negated)
 
 
+def _fanned_out(schema: Schema, from_: ir.From, scope: _Scope) -> set[str]:
+    """Tables whose rows are repeated by the joins (they are the 'one' side of a
+    one-to-many join), so COUNT(*) would count them more than once."""
+    by_alias = {alias: table for table, alias in scope.aliases.items()}
+    fanned: set[str] = set()
+    for join in from_.joins:
+        for left, right in join.on:
+            for a, b in ((left, right), (right, left)):
+                ta, tb = by_alias.get(a.source), by_alias.get(b.source)
+                if ta is None or tb is None:
+                    continue
+                # ``ta`` is repeated when ``tb`` references it (tb holds the FK to ta's key).
+                if any(fk.table == tb and fk.ref_table == ta and b.column in fk.columns
+                       for fk in schema.foreign_keys):
+                    fanned.add(ta)
+    return fanned
+
+
+def _count_expr(schema: Schema, scope: _Scope, table: str | None, fanned: set[str]) -> ir.Expr:
+    """COUNT(*) of a table, or COUNT(DISTINCT key) when joins repeat its rows."""
+    if table in fanned:
+        pk = schema.table(table).primary_key
+        if len(pk) == 1 and len(fanned) >= 1 and len(scope.aliases) > 1:
+            return ir.Agg("COUNT", ir.Col(scope.alias(table), pk[0]), True)
+    return ir.Agg("COUNT", ir.Star())
+
+
 def query_tables(intent: Intent) -> list[str]:
     tables: list[str] = []
     for item in intent.outputs:
@@ -331,6 +391,7 @@ def query_tables(intent: Intent) -> list[str]:
         tables.extend(cond.tables)
     for key in intent.group_by:
         tables.append(key.split(".", 1)[0])
+    tables.extend(intent.via)
     for order in intent.order:
         if order.column:
             tables.append(order.column.split(".", 1)[0])
@@ -387,19 +448,27 @@ def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str,
         root = intent.subject
     from_, scope = _from(schema, tables, root, prefix, join_choices)
     counter = [0]
-    items = tuple(ir.SelectItem(_agg_expr(scope, o.func, o.column, o.table, o.distinct))
+    fanned = _fanned_out(schema, from_, scope)
+    items = tuple(ir.SelectItem(ir.Star(scope.alias(o.table)) if o.star else
+                                _count_expr(schema, scope, o.table, fanned)
+                                if o.func == "COUNT" and o.column is None else
+                                _agg_expr(scope, o.func, o.column, o.table, o.distinct))
                   for o in intent.outputs)
     where_conds = [_condition(schema, scope, c, counter, join_choices)
-                   for c in intent.conditions if c.kind != "having"
+                   for c in intent.conditions if c.kind not in ("having", "having_vs")
                    and not (c.kind == "related" and c.table in scope.aliases)]
     if intent.connector == "OR" and len(where_conds) > 1:
         where: ir.Cond | None = ir.Or(tuple(where_conds))
     else:
         where = ir.conjoin(where_conds)
-    having_conds = [_condition(schema, scope, c, counter, join_choices)
-                    for c in intent.conditions if c.kind == "having"]
-    groups = tuple(scope.col(key) for key in _effective_groups(intent))
-    order = tuple(ir.OrderItem(_agg_expr(scope, o.func, o.column, o.table), o.desc)
+    having_conds = [ir.Compare(_count_expr(schema, scope, c.table, fanned), c.op, ir.Lit(c.values[0]))
+                    if c.kind == "having" and not c.column and c.func == "COUNT" else
+                    _condition(schema, scope, c, counter, join_choices)
+                    for c in intent.conditions if c.kind in ("having", "having_vs")]
+    groups = tuple(scope.col(key) for key in _effective_groups(intent, schema))
+    order = tuple(ir.OrderItem(_count_expr(schema, scope, o.table, fanned)
+                               if o.func == "COUNT" and o.column is None else
+                               _agg_expr(scope, o.func, o.column, o.table), o.desc)
                   for o in intent.order)
     return ir.Select(items=items, from_=from_, where=where, group_by=groups,
                      having=ir.conjoin(having_conds), order_by=order, limit=intent.limit,

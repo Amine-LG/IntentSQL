@@ -70,6 +70,15 @@ class ValueIndex:
     by_first_word: dict[str, tuple[str, ...]]       # first word -> normalized values
 
 
+def _singulars(norm: str) -> list[str]:
+    forms = [norm[:-1]]
+    if norm.endswith("es"):
+        forms.append(norm[:-2])
+    if norm.endswith("ies"):
+        forms.append(norm[:-3] + "y")
+    return forms
+
+
 def _normalize(value: str) -> str:
     return " ".join(value.lower().split())
 
@@ -185,6 +194,12 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             surface = question[start:end]
             norm = _normalize(surface)
             matches = index.exact.get(norm)
+            if not matches and norm.endswith("s") and len(norm) > 3:
+                # 'goalies' for a stored 'goalie', 'countries' for 'country'.
+                for singular in _singulars(norm):
+                    matches = index.exact.get(singular)
+                    if matches:
+                        break
             if not matches:
                 continue
             words = [t.lower for t in tokens[i:j]]

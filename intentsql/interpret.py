@@ -47,6 +47,9 @@ EXPLICIT_AGG = {
     "MAX": re.compile(r"\b(max|maximum)\b", re.I),
     "MIN": re.compile(r"\b(min|minimum)\b", re.I),
 }
+COUNT_CUE = re.compile(r"\b(number of|how many|count of|count the)\b", re.I)
+STAR_CUE = re.compile(r"\b(all (the )?(information|info|details|data|attributes|columns|fields)|"
+                      r"everything|every (detail|attribute|column))\b", re.I)
 DISTINCT_CUE = re.compile(r"\b(distinct|different|unique|differ\w*|various)\b", re.I)
 NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neither|nor|other than|"
                           r"lacks?|apart from|besides)\b|n't\b", re.I)
@@ -54,7 +57,7 @@ AGG_COMPARE_CUE = re.compile(r"\b(average|mean|than (any|all|every|each|the (max
                              r"smallest|highest|lowest|max|min))|than (that|those) of)\b", re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
-MAX_ROUNDS = 2
+MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
 
 
 @dataclass
@@ -100,6 +103,8 @@ class Candidates:
     limits: list[Option] = field(default_factory=list)
     shares: list[Option] = field(default_factory=list)
     joins: dict[str, list[Option]] = field(default_factory=dict)   # table pair -> FK choices
+    stars: list[Option] = field(default_factory=list)              # "all information about X"
+    multi_count: list[Option] = field(default_factory=list)        # several counts requested
 
 
 @dataclass
@@ -157,18 +162,23 @@ def relevant_tables(g: Grounding, max_columns: int = 90) -> list[str]:
 
 
 def _classes(g: Grounding, tables: list[str]) -> list[str]:
-    """One representative per FK-equivalence class in scope: the member whose
-    words best match the request (so 'student id' is not shown as 'person id')."""
+    """Columns to ask about.  Identifier columns linked by FK chains (Students.student_id
+    -> People.person_id) are one candidate, shown under the member whose words best
+    match the request.  Descriptive columns stay separate, because the same value in
+    different tables plays different roles (a student's department vs a course's)."""
     schema = g.schema
-    seen: set[tuple[str, ...]] = set()
+    covered: set[str] = set()
     reps: list[str] = []
     for table in tables:
         for column in schema.tables[table].columns:
-            members = [m for m in schema.equivalents(column.key) if m.split(".")[0] in tables]
-            klass = tuple(sorted(members))
-            if klass in seen:
+            if column.key in covered:
                 continue
-            seen.add(klass)
+            members = [column.key]
+            if column.is_identifier:
+                members += [m for m in schema.equivalents(column.key)
+                            if m != column.key and m.split(".")[0] in tables
+                            and schema.column(m).is_identifier and m not in covered]
+            covered.update(members)
             canon = schema.canonical(column.key)
             reps.append(max(members, key=lambda m: (g.column_link.get(m, 0),
                                                     g.table_link.get(m.split(".")[0], 0),
@@ -206,6 +216,13 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
             cands.counts.append(Option(f"t{len(cands.counts)}",
                                        f"how many different {column_phrase(schema, column.key)} values there are",
                                        OutputItem("COUNT", column.key, distinct=True)))
+
+    if STAR_CUE.search(g.question):
+        cands.stars = [Option(f"w{i}", f"every attribute of the {schema.tables[t].label} records",
+                              OutputItem(None, None, t, star=True))
+                       for i, t in enumerate(t for t in tables if not schema.is_bridge(t))]
+    if len(COUNT_CUE.findall(g.question)) >= 2:
+        cands.multi_count = [o for o in cands.counts if o.payload.column is None]
 
     # Outputs: one exclusive choice per column class.
     for i, column in enumerate(columns):
@@ -255,8 +272,12 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                     for func, fword in (("AVG", "average"), ("MAX", "maximum"), ("MIN", "minimum")):
                         cands.vs_aggregate.append(Option(
                             f"a{len(cands.vs_aggregate)}",
-                            f"{phrase} {word} the {fword} {phrase} of all {label} records",
+                            f"each result's {phrase} is {word} the {fword} {phrase} of all {label} records",
                             Condition("vs_aggregate", column.key, op, func=func)))
+                    cands.vs_aggregate.append(Option(
+                        f"a{len(cands.vs_aggregate)}",
+                        f"each group's average {phrase} is {word} the average {phrase} of all {label} records",
+                        Condition("having_vs", column.key, op, func="AVG")))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
     for column in columns:
@@ -427,9 +448,19 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
         opts = {o.key: o.text for o in group.options}
         opts["no"] = (f"not shown: the {group.phrase} is not requested, or is only used to "
                       "filter, sort, rank or group the results")
+        column = schema.column(group.options[0].payload.column)
+        hint = (" An identifier or code is shown only when the request asks for the id, code or "
+                "number itself, not when it merely mentions the record." if column.is_identifier else "")
         q[f"out_{group.key}"] = choice(
-            f"Does `request` ask to show the {group.phrase} in the results? If so, in which form?",
-            opts)
+            f"Does `request` ask to show the {group.phrase} in the results? If so, in which form?"
+            + hint, opts)
+    if cands.stars:
+        q["star"] = choice(
+            "Does `request` ask for all information (every attribute) of some records? If so, "
+            "of which records?",
+            {**{o.key: o.text for o in cands.stars}, "none": "no, it asks for specific attributes"})
+    for option in cands.multi_count:
+        q[f"cnt2_{option.key}"] = noul(f"Does `request` ask for {option.text}?")
     for key, func in cands.multi_agg:
         word = dict(AGG_FUNCS)[func]
         q[f"agg2_{key}_{func}"] = noul(
@@ -579,9 +610,18 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         option = _pick(cands.counts, count_answer)
         outputs.append(option.payload)
         record("count", "output", "count", count_answer, option.text)
+    if "star" in answers and answers["star"].choice != "none":
+        option = _pick(cands.stars, answers["star"])
+        outputs.append(option.payload)
+        record("star", "output", option.text, answers["star"], option.text)
+    for option in cands.multi_count:
+        answer = answers[f"cnt2_{option.key}"]
+        if (answer.p or 0) >= 0.6 and option.payload not in outputs:
+            outputs.append(option.payload)
+            record(f"cnt2_{option.key}", "output", option.text, answer, True)
     for group in cands.outputs:
         answer = answers[f"out_{group.key}"]
-        if answer.choice == "no":
+        if answer.choice == "no" or any(o.star for o in outputs):
             continue
         option = _pick(group.options, answer)
         outputs.append(option.payload)
@@ -741,14 +781,24 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             inner = [c for c in conditions if c.column and c.column.split(".")[0] in far
                      and c.column.split(".")[0] not in output_tables]
             conditions = [c for c in conditions if c not in inner]
+            # The negation lives in the relationship ('without any goalies'): conditions
+            # describing the excluded related records keep positive polarity.
+            inner = [_positive(c) for c in inner]
             conditions.append(Condition("absent", None, table=target, inner=tuple(inner)))
             subject = rel_subject
 
+    conditions = _dedupe_absent(schema, conditions, answers, cands)
     conditions, connector, both = _normalize_conditions(g, conditions, connector, subject)
+    group_keys = group_by or [o.column for o in outputs if o.column and not o.is_aggregate]
+    order, conditions = _retarget_self_counts(g, cands, answers, subject, order, conditions,
+                                              group_keys)
     aggregated = (any(o.is_aggregate for o in outputs) or any(o.is_aggregate for o in order)
-                  or any(c.kind == "having" for c in conditions))
+                  or any(c.kind in ("having", "having_vs") for c in conditions))
     if not aggregated:
         group_by = []          # "the name of each program" lists rows; it does not group them
+    if group_by and any(c.kind == "compare" and c.op == "=" and c.column in schema.equivalents(group_by[0])
+                        for c in conditions):
+        group_by = []          # grouping by a column pinned to one value yields a single group
     if group_by:
         group_classes = set(schema.equivalents(group_by[0]))
         outputs = [OutputItem("COUNT", None, o.column.split(".")[0])
@@ -764,28 +814,176 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             not o.is_aggregate for o in outputs):
         distinct = False
 
+    followup: dict[str, Question] = {}
+    outputs = _resolve_count_sum(schema, outputs, group_by, answers, followup, record)
     intent = Intent(outputs=tuple(outputs), conditions=tuple(conditions), connector=connector,
                     group_by=tuple(group_by), order=order, limit=limit, offset=offset,
                     distinct=distinct and not group_by, both=both, subject=subject,
                     excluded=tuple(excluded), join_choices=tuple(join_choices))
     intent = rebind_equivalents(schema, intent)
-    return Interpretation(intent, record.decisions, record.uncertain)
+    intent = _choose_routes(g, intent, answers, followup, record)
+    return Interpretation(intent, record.decisions, record.uncertain, followup=followup or None)
+
+
+def _positive(cond: Condition) -> Condition:
+    flip = {"!=": "=", "not_contains": "contains"}
+    if cond.op in flip:
+        kind = "text" if flip[cond.op] == "contains" else cond.kind
+        return Condition(kind, cond.column, flip[cond.op], cond.values, cond.negated, cond.func,
+                         cond.table, cond.inner)
+    return cond
+
+
+def _dedupe_absent(schema: Schema, conditions: list[Condition], answers: dict[str, Answer],
+                   cands: Candidates) -> list[Condition]:
+    """'schools without any goalies': one negated relationship, not one per hop."""
+    absent = [c for c in conditions if c.kind == "absent"]
+    if len(absent) < 2:
+        return conditions
+    keep = max(absent, key=lambda c: (bool(c.inner), -len(_far_side(schema, next(
+        (s for _, s, t in cands.relations if t == c.table), c.table), c.table))))
+    merged_inner = tuple(dict.fromkeys(i for c in absent for i in c.inner))
+    keep = Condition("absent", None, table=keep.table, inner=merged_inner)
+    return [c for c in conditions if c.kind != "absent"] + [keep]
+
+
+def _groups_are_singletons(schema: Schema, table: str, keys: list[str]) -> bool:
+    """True when every group holds one row of ``table`` (grouped by a unique column)."""
+    t = schema.table(table)
+    for key in keys:
+        for member in schema.equivalents(key):
+            if member.split(".")[0] != table:
+                continue
+            column = schema.column(member)
+            if (column.primary_key and len(t.primary_key) == 1) or (
+                    column.distinct_count and column.distinct_count == t.row_count and t.row_count > 1):
+                return True
+    return False
+
+
+def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, Answer],
+                          subject: str | None, order: tuple[Ordering, ...],
+                          conditions: list[Condition], group_keys: list[str]
+                          ) -> tuple[tuple[Ordering, ...], list[Condition]]:
+    """Counting a result's own records per result is always 1 ('the order with the most
+    items' counts items, not orders): count the most plausible related table instead."""
+    if subject is None:
+        return order, conditions
+    schema = g.schema
+
+    def related_choice() -> str | None:
+        scores: dict[str, float] = {}
+        for key, rel_subject, target in cands.relations:
+            if rel_subject != subject:
+                continue
+            answer = answers.get(f"rel_{key}")
+            has = answer.probabilities.get("has", 0.0) if answer else 0.0
+            scores[target] = max(scores.get(target, 0.0), has + g.table_link.get(target, 0.0))
+        return max(scores, key=lambda t: scores[t]) if scores else None
+
+    target = None
+    counts_subject = any(o.table == subject and o.func == "COUNT" and o.column is None
+                         for o in order) or any(c.kind == "having" and c.table == subject
+                                                and not c.column for c in conditions)
+    if counts_subject and _groups_are_singletons(schema, subject, group_keys):
+        target = related_choice()
+    if target is None:
+        return order, conditions
+    order = tuple(Ordering(o.func, o.column, target, o.desc)
+                  if o.table == subject and o.func == "COUNT" and o.column is None else o
+                  for o in order)
+    conditions = [Condition(c.kind, c.column, c.op, c.values, c.negated, c.func, target, c.inner)
+                  if c.kind == "having" and c.table == subject and not c.column else c
+                  for c in conditions]
+    return order, conditions
+
+
+def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list[str],
+                       answers: dict[str, Answer], followup: dict[str, Question],
+                       record: "_Recorder") -> list[OutputItem]:
+    """A count and a total of the same records ('the total number of students') are
+    usually one request read twice: ask which one is meant."""
+    count = next((o for o in outputs if o.func == "COUNT" and o.column is None), None)
+    total = next((o for o in outputs if o.func == "SUM" and o.column), None)
+    if count is None or total is None or group_by:
+        return outputs
+    key = "conflict_count_sum"
+    if key not in answers:
+        phrase = column_phrase(schema, total.column)
+        followup[key] = choice(
+            "Which does `request` ask for?",
+            {"count": f"how many {schema.table(count.table).label} records there are",
+             "sum": f"the total {phrase} (adding up the stored values)",
+             "both": "both of these, as two separate values"})
+        return outputs
+    answer = answers[key]
+    record(key, "output conflict", "count or total", answer, answer.choice)
+    if answer.choice == "count":
+        return [o for o in outputs if o is not total]
+    if answer.choice == "sum":
+        return [o for o in outputs if o is not count]
+    return outputs
+
+
+def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
+                   followup: dict[str, Question], record: "_Recorder") -> Intent:
+    """When two needed tables are connected by different routes of equal length
+    (instructor-student via advisor or via department), the route is a meaning: use
+    the one the request names, otherwise ask."""
+    from intentsql.intent import query_tables
+    schema = g.schema
+    tables = query_tables(intent)
+    related = {c.table for c in intent.conditions if c.kind == "related"}
+    via: list[str] = list(intent.via)
+    for i, a in enumerate(tables):
+        for b in tables[i + 1:]:
+            paths = schema.shortest_paths(a, b, limit=4)
+            if len(paths) < 2 or len(paths[0]) < 2:
+                continue
+            routes = {tuple(step.table for step in path[:-1]) for path in paths}
+            if len(routes) < 2:
+                continue
+            routes_list = sorted(routes)
+            named = [r for r in routes_list if any(t in related or g.table_link.get(t, 0) > 0
+                                                    for t in r)]
+            if len(named) == 1:
+                via.extend(named[0])
+                continue
+            key = f"route_{a}|{b}"
+            options = {f"p{k}": (f"{schema.table(a).label} and {schema.table(b).label} related through "
+                                 + " and ".join(schema.table(t).label for t in route))
+                       for k, route in enumerate(routes_list)}
+            if key not in answers:
+                followup[key] = choice(
+                    f"How does `request` relate {schema.table(a).label} and {schema.table(b).label}?",
+                    options)
+                continue
+            answer = answers[key]
+            route = routes_list[int(answer.choice[1:])]
+            record(key, "join route", options[answer.choice], answer, route)
+            via.extend(route)
+    if tuple(via) == intent.via:
+        return intent
+    return intent.with_(via=tuple(dict.fromkeys(via)))
 
 
 def _group_label(schema: Schema, key: str, outputs: list[OutputItem]) -> str | None:
-    """How to show a group: its key, or the entity's name when grouping by an id."""
+    """How to show a group: its key, or the entity's name when grouping by an id of a
+    table that has a name column (without adding a join just to show a label)."""
     column = schema.column(key)
     if not column.is_identifier:
         return key
     entity = schema.table(column.table)
-    for member in schema.equivalents(key):
-        if schema.column(member).primary_key:
-            entity = schema.table(member.split(".")[0])
     if any(o.column and o.column.split(".")[0] == entity.name and not o.is_aggregate for o in outputs):
         return None   # the entity is already shown through one of its attributes
-    for col in entity.columns:
-        if col.kind == TEXT and re.search(r"\b(name|title)\b", col.label):
-            return col.key
+    needed = {t for o in outputs for t in o.tables}
+    for member in schema.equivalents(key):
+        table = schema.table(member.split(".")[0])
+        if table.name != entity.name and table.name not in needed:
+            continue
+        for col in table.columns:
+            if col.kind == TEXT and re.search(r"\b(name|title)\b", col.label):
+                return col.key
     return key
 
 
@@ -889,10 +1087,13 @@ def _ordinal_offset(question: str) -> int | None:
 # ---- FK-equivalent columns ------------------------------------------------------------
 
 def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
-    """Use, for each FK-equivalent column, the member that keeps the join tree smallest."""
+    """Choose, jointly for all FK-equivalent columns, the members that make the join
+    tree smallest (a card's customer id is read from the card, not via a join)."""
+    from itertools import product
     keys: list[str] = [o.column for o in intent.outputs if o.column]
     keys += [c.column for c in intent.conditions if c.column and c.kind not in ("absent", "same_as")]
     keys += list(intent.group_by) + [o.column for o in intent.order if o.column]
+    keys = list(dict.fromkeys(keys))
     fixed: list[str] = []
     if any(c.kind == "absent" for c in intent.conditions) and intent.subject:
         fixed.append(intent.subject)
@@ -900,30 +1101,35 @@ def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
     fixed += [c.table for c in intent.conditions
               if c.kind in ("related", "having") and c.table and not c.column]
     fixed += [c.column.split(".")[0] for c in intent.conditions if c.kind == "same_as" and c.column]
-    fixed += [k.split(".")[0] for k in keys if len(schema.equivalents(k)) == 1]
-    tables = list(dict.fromkeys(fixed))
-    mapping: dict[str, str] = {}
-    for key in keys:
-        members = schema.equivalents(key)
-        if len(members) == 1 or key in mapping:
-            continue
-
-        def cost(member: str) -> tuple[int, int]:
-            candidate = tables + [member.split(".")[0]]
-            tree = schema.join_tree(candidate, candidate[0])
-            return (len(tree) if tree is not None else 99, 0 if member == key else 1)
-
-        chosen = min(members, key=cost)
-        mapping[key] = chosen
-        if chosen.split(".")[0] not in tables:
-            tables.append(chosen.split(".")[0])
-    if all(mapping.get(k, k) == k for k in keys):
+    fixed += list(intent.via)
+    flexible = [k for k in keys if len(schema.equivalents(k)) > 1]
+    fixed += [k.split(".")[0] for k in keys if k not in flexible]
+    fixed = list(dict.fromkeys(fixed))
+    if not flexible:
+        return intent
+    options = [schema.equivalents(k)[:6] for k in flexible]
+    best: tuple[tuple[int, int], tuple[str, ...]] | None = None
+    combos = 0
+    for combo in product(*options):
+        combos += 1
+        if combos > 512:
+            break
+        tables = list(dict.fromkeys(fixed + [m.split(".")[0] for m in combo]))
+        tree = schema.join_tree(tables, tables[0])
+        cost = (len(tree) if tree is not None else 99,
+                sum(1 for k, m in zip(flexible, combo) if k != m))
+        if best is None or cost < best[0]:
+            best = (cost, combo)
+    assert best is not None
+    mapping = dict(zip(flexible, best[1]))
+    if all(mapping[k] == k for k in flexible):
         return intent
 
     def m(key: str | None) -> str | None:
         return mapping.get(key, key) if key else key
 
-    outputs = tuple(OutputItem(o.func, m(o.column), o.table, o.distinct) for o in intent.outputs)
+    outputs = tuple(dict.fromkeys(OutputItem(o.func, m(o.column), o.table, o.distinct, o.star)
+                                  for o in intent.outputs))
     conditions = tuple(Condition(c.kind, m(c.column), c.op, c.values, c.negated, c.func, c.table,
                                  c.inner) for c in intent.conditions)
     order = tuple(Ordering(o.func, m(o.column), o.table, o.desc) for o in intent.order)
@@ -947,7 +1153,7 @@ def interpret(g: Grounding, ask: AskFn, strategy: Strategy | None = None
     answers = ask(state, round_one(g, cands, strategy), "interpretation")
     interpretation = assemble(g, cands, answers, strategy)
     rounds = 1
-    while interpretation.followup and rounds < MAX_ROUNDS:
+    while interpretation.followup and rounds < MAX_ROUNDS + 1:
         answers.update(ask(state, interpretation.followup, "follow-up"))
         interpretation = assemble(g, cands, answers, strategy)
         rounds += 1
