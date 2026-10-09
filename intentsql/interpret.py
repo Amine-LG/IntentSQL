@@ -1336,6 +1336,7 @@ def interpret(g: Grounding, ask: AskFn, strategy: Strategy | None = None
     cands = build_candidates(g, strategy)
     state = _state(g, cands, strategy)
     questions = round_one(g, cands, strategy)
+    questions_asked = dict(questions)
     if strategy.debias_order:
         answers = _ask_debiased(ask, state, questions)
     else:
@@ -1343,13 +1344,24 @@ def interpret(g: Grounding, ask: AskFn, strategy: Strategy | None = None
     interpretation = assemble(g, cands, answers, strategy)
     rounds = 1
     while interpretation.followup and rounds < MAX_ROUNDS + 1:
+        questions_asked.update(interpretation.followup)
         answers.update(ask(state, interpretation.followup, "follow-up"))
         interpretation = assemble(g, cands, answers, strategy)
         rounds += 1
     if interpretation.intent is None and not interpretation.message:
         interpretation.message = "Could not determine what the request asks to return."
     interpretation.answers = answers
+    _attach_options(interpretation.decisions, questions_asked)
     return interpretation, cands
+
+
+def _attach_options(decisions: list[Decision], questions: dict[str, Question]) -> None:
+    """Give every recorded Choice its option texts, for the debug view."""
+    for decision in decisions:
+        question = questions.get(decision.key)
+        if decision.options is None and question is not None and question.kind == "choice":
+            decision.options = {k: v if isinstance(v, str) else str(v)
+                                for k, v in (question.options or {}).items()}
 
 
 def alternatives(g: Grounding, cands: Candidates, interpretation: Interpretation,

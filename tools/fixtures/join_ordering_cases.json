@@ -1,9 +1,0 @@
-{
-  "suite": "join_ordering",
-  "cases": [
-    {"request": "List the schools in Cambridge, alphabetical by school name", "database": "dese", "tables": ["schools", "districts"], "expected": {"field": "schools.name", "direction": "ASC"}},
-    {"request": "Give each school district and its pupil count, largest pupil count first", "database": "dese", "tables": ["districts", "expenditures"], "expected": {"field": "expenditures.pupils", "direction": "DESC"}},
-    {"request": "Show each school's name with its district, reverse alphabetical by district name", "database": "dese", "tables": ["schools", "districts"], "expected": {"field": "districts.name", "direction": "DESC"}},
-    {"request": "Show me Cal Ripken's salary history, newest year first.", "database": "moneyball", "tables": ["salaries", "players"], "expected": {"field": "salaries.year", "direction": "DESC"}}
-  ]
-}

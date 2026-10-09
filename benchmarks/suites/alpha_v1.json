@@ -1,0 +1,806 @@
+{
+ "suite": "alpha_v1",
+ "description": "IntentSQL Alpha v1 internal corpus (core, paraphrase, adversarial, rejection families) on the bundled databases.",
+ "cases": [
+  {
+   "id": "CORE-01",
+   "database": "cyberchase.db",
+   "question": "How many episodes belong to season 2?",
+   "gold_sql": "SELECT COUNT(*) FROM episodes WHERE season = 2",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-02",
+   "database": "cyberchase.db",
+   "question": "List every episode title containing Hacker, alphabetically.",
+   "gold_sql": "SELECT title FROM episodes WHERE title LIKE '%Hacker%' ORDER BY title ASC",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-03",
+   "database": "cyberchase.db",
+   "question": "How many episodes originally aired during 2019?",
+   "gold_sql": "SELECT COUNT(*) FROM episodes WHERE air_date BETWEEN '2019-01-01' AND '2019-12-31'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-04",
+   "database": "cyberchase.db",
+   "question": "Give me the three most recent episode airings. Return title and air date, newest first.",
+   "gold_sql": "SELECT title, air_date FROM episodes ORDER BY air_date DESC LIMIT 3",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-05",
+   "database": "cyberchase.db",
+   "question": "How many different episode topics are recorded?",
+   "gold_sql": "SELECT COUNT(DISTINCT topic) FROM episodes",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-06",
+   "database": "dese.db",
+   "question": "How many Public School records are in Boston?",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type='Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-07",
+   "database": "dese.db",
+   "question": "How many Charter School records are in Boston?",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type='Charter School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-08",
+   "database": "dese.db",
+   "question": "Show districts with per-pupil expenditure between 30000 and 36000 inclusive. Return district name and expenditure, highest expenditure first.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id WHERE expenditures.per_pupil_expenditure BETWEEN 30000 AND 36000 ORDER BY expenditures.per_pupil_expenditure DESC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-09",
+   "database": "dese.db",
+   "question": "Show the five districts with the highest per-pupil expenditure. Return district name and per-pupil expenditure, highest first.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-10",
+   "database": "dese.db",
+   "question": "List each school type and its number of schools, largest count first.",
+   "gold_sql": "SELECT type, COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC, type ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-11",
+   "database": "dese.db",
+   "question": "For charter schools, show the five cities with the most schools. Return city and count, highest count first.",
+   "gold_sql": "SELECT city, COUNT(*) FROM schools WHERE type='Charter School' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-12",
+   "database": "moneyball.db",
+   "question": "How many players have no birth country recorded?",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country IS NULL",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-13",
+   "database": "moneyball.db",
+   "question": "How many players have USA as their recorded birth-country code?",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country='USA'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-14",
+   "database": "moneyball.db",
+   "question": "Which birth-country codes have at least 100 players? Return country code and player count, largest count first.",
+   "gold_sql": "SELECT birth_country, COUNT(*) FROM players GROUP BY birth_country HAVING COUNT(*) >= 100 ORDER BY COUNT(*) DESC, birth_country ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-15",
+   "database": "moneyball.db",
+   "question": "What is the maximum home-run total recorded in a performance?",
+   "gold_sql": "SELECT MAX(HR) FROM performances",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-16",
+   "database": "moneyball.db",
+   "question": "From 1990 through 2005, show the years whose maximum home-run total was at least 60. Return year and maximum home runs, highest maximum first.",
+   "gold_sql": "SELECT year, MAX(HR) FROM performances WHERE year BETWEEN 1990 AND 2005 GROUP BY year HAVING MAX(HR) >= 60 ORDER BY MAX(HR) DESC, year ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-17",
+   "database": "moneyball.db",
+   "question": "Show the five highest salary records for players whose birth-country code is USA. Return first name, last name, year, and salary, highest salary first.",
+   "gold_sql": "SELECT players.first_name, players.last_name, salaries.year, salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-18",
+   "database": "moneyball.db",
+   "question": "Show the five tallest players whose recorded birth-country code is CAN. Return first name, last name, and height. Sort by height descending, then last name alphabetically.",
+   "gold_sql": "SELECT first_name,last_name,height FROM players WHERE birth_country='CAN' ORDER BY height DESC,last_name ASC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-19",
+   "database": "moneyball.db",
+   "question": "How many different recorded batting-side codes are there?",
+   "gold_sql": "SELECT COUNT(DISTINCT bats) FROM players",
+   "ordered": false,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "CORE-20",
+   "database": "moneyball.db",
+   "question": "Return year and salary for salary records between 12000000 and 15000000 inclusive, highest salary first.",
+   "gold_sql": "SELECT year,salary FROM salaries WHERE salary BETWEEN 12000000 AND 15000000 ORDER BY salary DESC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "core",
+   "note": ""
+  },
+  {
+   "id": "PARA-NEG-01",
+   "database": "dese.db",
+   "question": "How many Boston schools aren't public schools?",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type!='Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "negative_public_boston",
+   "note": ""
+  },
+  {
+   "id": "PARA-NEG-02",
+   "database": "dese.db",
+   "question": "Count schools in Boston, excluding the public ones.",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type!='Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "negative_public_boston",
+   "note": ""
+  },
+  {
+   "id": "PARA-NEG-03",
+   "database": "dese.db",
+   "question": "In Boston, how many schools have a type other than Public School?",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type!='Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "negative_public_boston",
+   "note": ""
+  },
+  {
+   "id": "PARA-NEG-04",
+   "database": "dese.db",
+   "question": "Give me the number of Boston schools that are not of the Public School type.",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Boston' AND type!='Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "negative_public_boston",
+   "note": ""
+  },
+  {
+   "id": "PARA-CAN-01",
+   "database": "moneyball.db",
+   "question": "How many players were born in Canada?",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country='CAN'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "canada_to_CAN",
+   "note": ""
+  },
+  {
+   "id": "PARA-CAN-02",
+   "database": "moneyball.db",
+   "question": "Count Canada-born players.",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country='CAN'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "canada_to_CAN",
+   "note": ""
+  },
+  {
+   "id": "PARA-CAN-03",
+   "database": "moneyball.db",
+   "question": "How many players have Canada as their birth country?",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country='CAN'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "canada_to_CAN",
+   "note": ""
+  },
+  {
+   "id": "PARA-CAN-04",
+   "database": "moneyball.db",
+   "question": "Give me the number of players born in Canada.",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country='CAN'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "canada_to_CAN",
+   "note": ""
+  },
+  {
+   "id": "PARA-MIN-01",
+   "database": "dese.db",
+   "question": "Which district has the lowest per-pupil expenditure? Return district name and per-pupil expenditure.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "joined_min_expenditure",
+   "note": ""
+  },
+  {
+   "id": "PARA-MIN-02",
+   "database": "dese.db",
+   "question": "What district spends the least per pupil? Give me its name and the amount.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "joined_min_expenditure",
+   "note": ""
+  },
+  {
+   "id": "PARA-MIN-03",
+   "database": "dese.db",
+   "question": "Name the district with the smallest per-pupil expenditure and show that expenditure.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "joined_min_expenditure",
+   "note": ""
+  },
+  {
+   "id": "PARA-MIN-04",
+   "database": "dese.db",
+   "question": "Find the single district with the minimum per-pupil expenditure. Return its name and expenditure.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "joined_min_expenditure",
+   "note": ""
+  },
+  {
+   "id": "PARA-COMMON-01",
+   "database": "dese.db",
+   "question": "Which school type is the most common? Give me the type and count.",
+   "gold_sql": "SELECT type,COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC,type ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "most_common_school_type",
+   "note": ""
+  },
+  {
+   "id": "PARA-COMMON-02",
+   "database": "dese.db",
+   "question": "What kind of school appears most often? Return the school type and how many there are.",
+   "gold_sql": "SELECT type,COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC,type ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "most_common_school_type",
+   "note": ""
+  },
+  {
+   "id": "PARA-COMMON-03",
+   "database": "dese.db",
+   "question": "Which value of school type occurs most frequently? Show the value and count.",
+   "gold_sql": "SELECT type,COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC,type ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "most_common_school_type",
+   "note": ""
+  },
+  {
+   "id": "PARA-COMMON-04",
+   "database": "dese.db",
+   "question": "Give me the most common school type together with its number of schools.",
+   "gold_sql": "SELECT type,COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC,type ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "most_common_school_type",
+   "note": ""
+  },
+  {
+   "id": "PARA-USA-TOP-01",
+   "database": "moneyball.db",
+   "question": "Show the five highest salary records for players born in the USA. Return first name, last name, year, and salary, highest salary first.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.year,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "usa_top5_salary",
+   "note": ""
+  },
+  {
+   "id": "PARA-USA-TOP-02",
+   "database": "moneyball.db",
+   "question": "Give me the top five salaries belonging to USA-born players, with player name, year, and salary.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.year,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "usa_top5_salary",
+   "note": ""
+  },
+  {
+   "id": "PARA-USA-TOP-03",
+   "database": "moneyball.db",
+   "question": "Which five salary records are largest among players born in the USA? Show first name, last name, year, and salary.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.year,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "usa_top5_salary",
+   "note": ""
+  },
+  {
+   "id": "PARA-USA-TOP-04",
+   "database": "moneyball.db",
+   "question": "For players born in the USA, return only the five biggest salary records, largest first, with name, year, and salary.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.year,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "usa_top5_salary",
+   "note": ""
+  },
+  {
+   "id": "ADV-01",
+   "database": "cyberchase.db",
+   "question": "Show the season and title of episodes whose topic is exactly Fractions.",
+   "gold_sql": "SELECT season,title FROM episodes WHERE topic='Fractions'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-02",
+   "database": "cyberchase.db",
+   "question": "Show season and title for episodes with the word Fractions anywhere in the topic text. Sort by season, then title alphabetically.",
+   "gold_sql": "SELECT season,title FROM episodes WHERE topic LIKE '%Fractions%' ORDER BY season ASC,title ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-03",
+   "database": "dese.db",
+   "question": "Show districts spending from 30k through 36k per pupil. Return district and per-pupil expenditure, highest first.",
+   "gold_sql": "SELECT districts.name,expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id WHERE expenditures.per_pupil_expenditure BETWEEN 30000 AND 36000 ORDER BY expenditures.per_pupil_expenditure DESC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-04",
+   "database": "cyberchase.db",
+   "question": "How many episodes aired during February 2020?",
+   "gold_sql": "SELECT COUNT(*) FROM episodes WHERE air_date BETWEEN '2020-02-01' AND '2020-02-29'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-05",
+   "database": "dese.db",
+   "question": "Who are the five biggest per-student spenders? Give me the district and what they spend per pupil.",
+   "gold_sql": "SELECT districts.name,expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id ORDER BY expenditures.per_pupil_expenditure DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-06",
+   "database": "dese.db",
+   "question": "List every school type with its number of schools, from most common to least common.",
+   "gold_sql": "SELECT type,COUNT(*) FROM schools GROUP BY type ORDER BY COUNT(*) DESC,type ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-07",
+   "database": "moneyball.db",
+   "question": "Between 1990 and 2005, which year had the highest maximum home-run total? Return the year and maximum.",
+   "gold_sql": "SELECT year,MAX(HR) FROM performances WHERE year BETWEEN 1990 AND 2005 GROUP BY year ORDER BY MAX(HR) DESC,year ASC LIMIT 1",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-08",
+   "database": "moneyball.db",
+   "question": "From 1990 through 2005, list every year by its maximum home-run total, greatest to smallest.",
+   "gold_sql": "SELECT year,MAX(HR) FROM performances WHERE year BETWEEN 1990 AND 2005 GROUP BY year ORDER BY MAX(HR) DESC,year ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-09",
+   "database": "moneyball.db",
+   "question": "How many players have a recorded birth-country code other than USA?",
+   "gold_sql": "SELECT COUNT(*) FROM players WHERE birth_country != 'USA'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-10",
+   "database": "moneyball.db",
+   "question": "Give me five left-handed batters born after 1970, with the youngest players first and last name alphabetically for ties. Return first name, last name, and birth year.",
+   "gold_sql": "SELECT first_name,last_name,birth_year FROM players WHERE bats='L' AND birth_year>1970 ORDER BY birth_year DESC,last_name ASC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-11",
+   "database": "dese.db",
+   "question": "Worcester schools, but leave out the charter ones. How many are left?",
+   "gold_sql": "SELECT COUNT(*) FROM schools WHERE city='Worcester' AND type!='Charter School'",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-12",
+   "database": "dese.db",
+   "question": "For Boston and Cambridge, break down the number of schools by city and school type.",
+   "gold_sql": "SELECT city,type,COUNT(*) FROM schools WHERE city IN ('Boston','Cambridge') GROUP BY city,type ORDER BY city ASC,type ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-13",
+   "database": "cyberchase.db",
+   "question": "Which episode titles finish with the word Day? Put them in alphabetical order.",
+   "gold_sql": "SELECT title FROM episodes WHERE title LIKE '%Day' ORDER BY title ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-14",
+   "database": "dese.db",
+   "question": "Find me five schools with Academy anywhere in their name. Include city and school type. Alphabetical by school name.",
+   "gold_sql": "SELECT name,city,type FROM schools WHERE name LIKE '%Academy%' ORDER BY name ASC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-15",
+   "database": "cyberchase.db",
+   "question": "Give me the three latest airings. I only need the title and air date, newest first.",
+   "gold_sql": "SELECT title,air_date FROM episodes ORDER BY air_date DESC LIMIT 3",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-16",
+   "database": "moneyball.db",
+   "question": "Give me salaries no lower than 12 million and no higher than 15 million. Return year and salary, ordered from largest to smallest.",
+   "gold_sql": "SELECT year,salary FROM salaries WHERE salary BETWEEN 12000000 AND 15000000 ORDER BY salary DESC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-17",
+   "database": "dese.db",
+   "question": "Which district spends more than 40k per pupil? Give me its name and per-pupil expenditure.",
+   "gold_sql": "SELECT districts.name,expenditures.per_pupil_expenditure FROM expenditures JOIN districts ON expenditures.district_id=districts.id WHERE expenditures.per_pupil_expenditure > 40000",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-18",
+   "database": "moneyball.db",
+   "question": "Which birth countries produced at least 100 players? Show the biggest contributors first.",
+   "gold_sql": "SELECT birth_country,COUNT(*) FROM players GROUP BY birth_country HAVING COUNT(*) >= 100 ORDER BY COUNT(*) DESC,birth_country ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-19",
+   "database": "dese.db",
+   "question": "List the names of Boston schools whose type is either Public School or Charter School, alphabetically.",
+   "gold_sql": "SELECT name FROM schools WHERE city='Boston' AND type IN ('Public School','Charter School') ORDER BY name ASC",
+   "ordered": true,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "ADV-20",
+   "database": "moneyball.db",
+   "question": "What was the average salary in 2001, rounded to two decimal places?",
+   "gold_sql": "SELECT ROUND(AVG(salary),2) FROM salaries WHERE year=2001",
+   "ordered": false,
+   "expect": "answer",
+   "family": "adversarial",
+   "note": ""
+  },
+  {
+   "id": "REJ-01",
+   "database": "moneyball.db",
+   "question": "For every birth country, give me its two tallest players.",
+   "gold_sql": "SELECT birth_country,first_name,last_name,height FROM (SELECT birth_country,first_name,last_name,height,ROW_NUMBER() OVER(PARTITION BY birth_country ORDER BY height DESC,last_name ASC,first_name ASC) rn FROM players WHERE birth_country IS NOT NULL) WHERE rn<=2",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "window_top_n_per_group"
+  },
+  {
+   "id": "REJ-02",
+   "database": "moneyball.db",
+   "question": "What is the average of the yearly maximum home-run totals from 1990 through 2005?",
+   "gold_sql": "SELECT AVG(year_max) FROM (SELECT year,MAX(HR) AS year_max FROM performances WHERE year BETWEEN 1990 AND 2005 GROUP BY year)",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "nested_aggregate"
+  },
+  {
+   "id": "REJ-03",
+   "database": "dese.db",
+   "question": "Show every school name together with the per-pupil expenditure of its district.",
+   "gold_sql": "SELECT schools.name,expenditures.per_pupil_expenditure FROM schools JOIN districts ON schools.district_id=districts.id JOIN expenditures ON districts.id=expenditures.district_id",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "multi_hop_join"
+  },
+  {
+   "id": "REJ-04",
+   "database": "dese.db",
+   "question": "Show each school name with the exemplary-teacher percentage for its district.",
+   "gold_sql": "SELECT schools.name,staff_evaluations.exemplary FROM schools JOIN districts ON schools.district_id=districts.id JOIN staff_evaluations ON districts.id=staff_evaluations.district_id",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "multi_hop_join"
+  },
+  {
+   "id": "REJ-05",
+   "database": "moneyball.db",
+   "question": "Which five teams produced the most total hits in 2001? Show team and total hits.",
+   "gold_sql": "SELECT teams.name,SUM(performances.H) FROM performances JOIN teams ON performances.team_id=teams.id WHERE performances.year=2001 GROUP BY teams.id ORDER BY SUM(performances.H) DESC LIMIT 5",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "aggregate_over_join"
+  },
+  {
+   "id": "REJ-06",
+   "database": "moneyball.db",
+   "question": "Which five teams had the lowest average salary in 2001? Show team and average salary.",
+   "gold_sql": "SELECT teams.name,AVG(salaries.salary) FROM salaries JOIN teams ON salaries.team_id=teams.id WHERE salaries.year=2001 GROUP BY teams.id ORDER BY AVG(salaries.salary) ASC LIMIT 5",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "aggregate_over_join"
+  },
+  {
+   "id": "REJ-07",
+   "database": "moneyball.db",
+   "question": "Show salary records from 2001 for players born in the USA. Return player name and salary.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE salaries.year=2001 AND players.birth_country='USA'",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "multiple_predicates_on_join"
+  },
+  {
+   "id": "REJ-08",
+   "database": "moneyball.db",
+   "question": "Show the five highest USA-born player salaries, sorting equal salaries by last name alphabetically.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.salary FROM salaries JOIN players ON salaries.player_id=players.id WHERE players.birth_country='USA' ORDER BY salaries.salary DESC,players.last_name ASC LIMIT 5",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "secondary_order_on_join"
+  },
+  {
+   "id": "REJ-09",
+   "database": "moneyball.db",
+   "question": "Who were the ten cheapest players per hit in 2001? Show first name, last name, and dollars per hit.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.salary*1.0/performances.H FROM players JOIN salaries ON players.id=salaries.player_id JOIN performances ON players.id=performances.player_id AND salaries.year=performances.year WHERE salaries.year=2001 AND performances.H>0 ORDER BY salaries.salary*1.0/performances.H ASC LIMIT 10",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "derived_expression_multi_join"
+  },
+  {
+   "id": "REJ-10",
+   "database": "moneyball.db",
+   "question": "Label each salary record as high when salary is at least 10000000 and standard otherwise. Return year, salary, and label.",
+   "gold_sql": "SELECT year,salary,CASE WHEN salary>=10000000 THEN 'high' ELSE 'standard' END FROM salaries LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "case_expression"
+  },
+  {
+   "id": "REJ-11",
+   "database": "moneyball.db",
+   "question": "How many distinct combinations of birth country and birth year are recorded?",
+   "gold_sql": "SELECT COUNT(*) FROM (SELECT DISTINCT birth_country,birth_year FROM players WHERE birth_country IS NOT NULL AND birth_year IS NOT NULL)",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "multi_column_distinct_count"
+  },
+  {
+   "id": "REJ-12",
+   "database": "moneyball.db",
+   "question": "Show players who are not in the set consisting of USA-born players or Canadian-born left-handed batters.",
+   "gold_sql": "SELECT first_name,last_name FROM players WHERE NOT (birth_country='USA' OR (birth_country='CAN' AND bats='L'))",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "nested_boolean_not"
+  },
+  {
+   "id": "REJ-13",
+   "database": "moneyball.db",
+   "question": "Show players who are either USA-born right-handed batters or Canada-born left-handed batters.",
+   "gold_sql": "SELECT first_name,last_name FROM players WHERE (birth_country='USA' AND bats='R') OR (birth_country='CAN' AND bats='L') LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "nested_mixed_boolean"
+  },
+  {
+   "id": "REJ-14",
+   "database": "moneyball.db",
+   "question": "Show salary records that are above that player's own career average salary.",
+   "gold_sql": "SELECT s1.player_id,s1.year,s1.salary FROM salaries s1 WHERE s1.salary > (SELECT AVG(s2.salary) FROM salaries s2 WHERE s2.player_id=s1.player_id) LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "correlated_subquery"
+  },
+  {
+   "id": "REJ-15",
+   "database": "moneyball.db",
+   "question": "Show players who never have a salary record.",
+   "gold_sql": "SELECT first_name,last_name FROM players p WHERE NOT EXISTS (SELECT 1 FROM salaries s WHERE s.player_id=p.id) LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "not_exists_anti_join"
+  },
+  {
+   "id": "REJ-16",
+   "database": "moneyball.db",
+   "question": "Show pairs of different players who were born in the same city.",
+   "gold_sql": "SELECT p1.first_name,p1.last_name,p2.first_name,p2.last_name,p1.birth_city FROM players p1 JOIN players p2 ON p1.birth_city=p2.birth_city AND p1.id<p2.id WHERE p1.birth_city IS NOT NULL LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "self_join"
+  },
+  {
+   "id": "REJ-17",
+   "database": "moneyball.db",
+   "question": "Show player name, salary year, salary, and team name for salary records.",
+   "gold_sql": "SELECT players.first_name,players.last_name,salaries.year,salaries.salary,teams.name FROM salaries JOIN players ON salaries.player_id=players.id JOIN teams ON salaries.team_id=teams.id LIMIT 100",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "three_table_join"
+  },
+  {
+   "id": "REJ-18",
+   "database": "moneyball.db",
+   "question": "Show salary records whose salary is above the overall average salary.",
+   "gold_sql": "SELECT year,salary FROM salaries WHERE salary > (SELECT AVG(salary) FROM salaries)",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "scalar_subquery_threshold"
+  },
+  {
+   "id": "REJ-19",
+   "database": "moneyball.db",
+   "question": "For each year, show the percentage of performances with at least 20 home runs.",
+   "gold_sql": "SELECT year,100.0*SUM(CASE WHEN HR>=20 THEN 1 ELSE 0 END)/COUNT(*) FROM performances GROUP BY year ORDER BY year",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "grouped_derived_expression"
+  },
+  {
+   "id": "REJ-20",
+   "database": "moneyball.db",
+   "question": "Which years had a maximum home-run total above the average of all yearly maximums?",
+   "gold_sql": "SELECT year,MAX(HR) FROM performances GROUP BY year HAVING MAX(HR) > (SELECT AVG(year_max) FROM (SELECT MAX(HR) AS year_max FROM performances GROUP BY year))",
+   "ordered": false,
+   "expect": "refuse",
+   "family": "reject",
+   "note": "nested_group_threshold"
+  }
+ ]
+}

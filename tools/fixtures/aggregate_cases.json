@@ -1,9 +1,0 @@
-{
-  "suite": "aggregate",
-  "cases": [
-    {"request": "What is the average amount districts spend per pupil?", "database": "dese", "table": "expenditures", "expected": {"function": "AVG", "column": "per_pupil_expenditure"}},
-    {"request": "What is the total salary paid?", "database": "moneyball", "table": "salaries", "expected": {"function": "SUM", "column": "salary"}},
-    {"request": "What is the highest single salary?", "database": "moneyball", "table": "salaries", "expected": {"function": "MAX", "column": "salary"}},
-    {"request": "What is the earliest air date?", "database": "cyberchase", "table": "episodes", "expected": {"function": "MIN", "column": "air_date"}}
-  ]
-}

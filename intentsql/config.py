@@ -8,12 +8,14 @@ Recognized variables (all optional):
 ``INTENTSQL_JEV_CACHE``                           Directory for a development response cache.
 ``INTENTSQL_WORKSPACE``                           Where imported databases and settings live.
 
-The ``.env`` file is read from the current directory or the project root.
-Values already present in the environment win.  The key is never logged.
+Precedence: process environment, then settings saved from the web app's
+Connection dialog (``<workspace>/connection.json``), then a ``.env`` file in the
+current directory or the project root.  The key is never logged.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -64,13 +66,24 @@ def settings() -> Settings:
         if candidate.is_file():
             file_values = {**_read_env_file(candidate), **file_values}
 
-    def get(name: str, default: str = "") -> str:
-        return os.environ.get(name) or file_values.get(name) or default
+    def env(name: str) -> str:
+        return os.environ.get(name) or ""
 
+    def get(name: str, default: str = "") -> str:
+        return env(name) or file_values.get(name) or default
+
+    workspace = Path(get("INTENTSQL_WORKSPACE") or _default_workspace()).expanduser()
+    try:
+        saved = json.loads((workspace / "connection.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
     return Settings(
-        jev_api_key=get("SYSTEM_ONE_API_KEY") or get("TYPESAFE_API_KEY"),
-        jev_url=get("SYSTEM_ONE_URL", "https://api.typesafe.ai/v1/systemone"),
-        jev_model=get("SYSTEM_ONE_MODEL", "jev-latest"),
+        jev_api_key=(env("SYSTEM_ONE_API_KEY") or env("TYPESAFE_API_KEY") or saved.get("api_key")
+                     or file_values.get("SYSTEM_ONE_API_KEY") or file_values.get("TYPESAFE_API_KEY") or ""),
+        jev_url=env("SYSTEM_ONE_URL") or saved.get("url") or file_values.get("SYSTEM_ONE_URL")
+        or "https://api.typesafe.ai/v1/systemone",
+        jev_model=env("SYSTEM_ONE_MODEL") or saved.get("model") or file_values.get("SYSTEM_ONE_MODEL")
+        or "jev-latest",
         jev_cache_dir=get("INTENTSQL_JEV_CACHE") or None,
-        workspace=Path(get("INTENTSQL_WORKSPACE") or _default_workspace()),
+        workspace=workspace,
     )

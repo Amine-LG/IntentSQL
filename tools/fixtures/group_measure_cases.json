@@ -1,8 +1,0 @@
-{
-  "suite": "group_measure",
-  "cases": [
-    {"request":"Show the seasons with more than 10 episodes.","database":"cyberchase","table":"episodes","expected":{"kind":"count","qualifies_groups":true}},
-    {"request":"Which topics appear more than once?","database":"cyberchase","table":"episodes","expected":{"kind":"count","qualifies_groups":true}},
-    {"request":"Which years had a maximum home run total above 60?","database":"moneyball","table":"performances","expected":{"kind":"aggregate","qualifies_groups":true}}
-  ]
-}

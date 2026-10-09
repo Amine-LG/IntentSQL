@@ -3,109 +3,123 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101311">
-  <meta name="intentsql-client-version" content="__ASSET_VERSION__">
-  <meta name="description" content="Watch natural language become bounded semantic decisions, a typed query program, and deterministic SQL.">
-  <title>IntentSQL &middot; The query, made clear.</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=__ASSET_VERSION__">
-  <link rel="stylesheet" href="/static/style.css?v=__ASSET_VERSION__">
-  <script src="/static/app.js?v=__ASSET_VERSION__" defer></script>
+  <meta name="description" content="Ask a SQLite database in plain English. IntentSQL grounds the question in the schema, builds a typed query plan, and runs parameterized SQL.">
+  <title>IntentSQL</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-<a class="skip-link" href="#prompt">Skip to request</a>
-<div class="shell">
-  <header class="topbar">
-    <a class="brand" href="/" aria-label="IntentSQL home"><span class="brand-mark">i<span>&nearr;</span></span><strong>Intent<span>SQL</span></strong><span class="version">STUDIO / 0.1 ALPHA</span></a>
-    <div class="top-actions"><span class="local-badge"><i></i> LOCAL WORKSPACE</span><span id="active-engine" class="engine-badge" title="Active semantic provider and model"><i></i><span>Checking provider…</span></span><button id="open-settings" aria-label="Connection settings" class="text-button" type="button">Connection <span aria-hidden="true">&nearr;</span></button><button id="theme" class="icon-button" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">&#9680;</button></div>
-  </header>
-  <div class="layout">
-    <aside class="sidebar" aria-label="Database workspace">
-      <div class="sidebar-label">WORKSPACE</div>
-      <div class="nav-active"><span aria-hidden="true">&nearr;</span> Query studio <span class="nav-dot"></span></div>
-      <button id="inspect-db" class="nav-button" type="button"><span aria-hidden="true">&nearr;</span> Database explorer <span aria-hidden="true">&nearr;</span></button>
-      <section class="sidebar-section database-section">
-        <div class="section-heading"><h2>Data source</h2><span class="tiny-label">SQLITE</span></div>
-        <label class="sr-only" for="database">Database working copy</label><div class="database-picker"><select id="database" aria-label="Database working copy" autocomplete="off"></select><button id="delete-db" class="icon-button delete-db" type="button" aria-label="Delete imported database" title="Delete imported database" hidden>&times;</button></div>
-        <p class="source-caption" id="source-caption">Loading local databases&hellip;</p>
-      </section>
-      <section class="sidebar-section schema-section">
-        <div class="section-heading"><h2>Schema</h2><span id="table-count" class="count">&mdash;</span></div>
-        <div id="schema" class="schema-list"><p class="muted small">Inspecting tables&hellip;</p></div>
-        <button id="import-db" class="import-button" type="button">+ Import SQLite database</button>
-      </section>
-      <div class="sample-row"><span class="tiny-label">EXPLORE THE POSSIBILITIES</span><button class="sample" data-db="cyberchase.db" data-prompt="Return only the titles of the seven earliest aired episodes, ordered by air date ascending."><span>01</span> The first seven episodes <b>&nearr;</b></button><button class="sample" data-db="moneyball.db" data-prompt="How many left-handed batters are in the players table?"><span>02</span> Left-handed batters <b>&nearr;</b></button><button class="sample" data-db="cyberchase.db" data-prompt="Count episodes by season, keeping seasons with at least 12 episodes. Return season and count, ordered by season ascending."><span>03</span> Seasons with 12+ episodes <b>&nearr;</b></button><button class="sample" data-db="dese.db" data-prompt="For schools in Springfield, return school name and district name, ordered by school name alphabetically."><span>04</span> Schools and their districts <b>&nearr;</b></button><button class="sample" data-db="moneyball.db" data-prompt="For performances from 1998 through 2000, return year and total home runs, grouped by year, highest total first."><span>05</span> Home runs across the years <b>&nearr;</b></button></div>
-
-      <div class="sidebar-bottom">
-        <button id="connection-shortcut" class="connection-link" type="button"><span id="connection-status" class="connection-status"><span class="status-dot"></span><span>Checking connection</span></span><span aria-hidden="true">&nearr;</span></button>
-        <span class="workspace-note">Working copies &middot; originals preserved</span>
-      </div>
-    </aside>
-    <main>
-      <section class="intro compact-intro" aria-labelledby="intro-title">
-        <div><div class="eyebrow"><span class="accent-line"></span> LANGUAGE IN. CLARITY OUT.</div><h1 id="intro-title">The query, <span>made clear.</span></h1><p>Ask in your own words. Watch meaning become a query.</p></div>
-      </section>
-      <section class="journey" aria-label="Live query execution">
-        <div class="pipeline" aria-label="Execution stages"><div data-phase="inspect"><span>01</span><strong>Inspect</strong><small>Database structure</small></div><i>&rarr;</i><div data-phase="resolve"><span>02</span><strong>Resolve</strong><small>Bounded decisions</small></div><i>&rarr;</i><div data-phase="compile"><span>03</span><strong>Compile</strong><small>Typed program &rarr; SQL</small></div><i>&rarr;</i><div data-phase="execute"><span>04</span><strong>Execute</strong><small>Exact SQLite result</small></div></div>
-        <div id="notice" class="notice" role="status" aria-live="polite"><span class="pulse"></span><span id="notice-text">Ready when you are. Start with a question below.</span><span id="elapsed">&mdash;</span></div>
-        <div id="stats" class="stats" aria-label="Live usage"></div>
-      </section>
-      <div class="run-workspace">
-      <section class="output-panel" aria-labelledby="output-title">
-        <div class="panel-head result-head"><div><span class="eyebrow">THE ANSWER</span><h2 id="output-title">Results</h2><p id="result-summary">Your database has the answer. Give it a question.</p></div><div class="result-actions"><button id="export-csv" class="text-button" disabled>Export CSV &darr;</button><div class="row-count"><strong id="row-count">&mdash;</strong><span id="row-count-label">rows</span></div></div></div>
-        <div class="sql-box"><div class="sql-head"><span><i></i> <span id="query-label">QUERY CONSTRUCTION</span> <b id="query-kind">DETERMINISTIC</b></span><button id="copy-sql" class="text-button" type="button" disabled>Copy SQL</button></div><pre id="sql">SQL appears when the typed program is ready.</pre><details id="execution-details" class="execution-details" hidden><summary>Execution details <span>parameterized SQL + bound values</span></summary><div class="execution-details-body"><div class="execution-block"><label>PARAMETERIZED SQL</label><pre id="parameterized-sql"></pre></div><div class="execution-block"><label>BOUND VALUES</label><div id="params" class="params"></div></div></div></details><details id="typed-program"><summary>Query program <span id="program-status" class="pill">Waiting</span></summary><div id="program" class="program-content"><div class="program-placeholder"><div><span>source</span><b>awaiting intent</b></div><div><span>output</span><i></i></div><div><span>filters</span><i></i></div><div><span>order</span><i></i></div><p>Resolved meaning takes shape here.<br>Only inspected structure can become SQL.</p></div></div></details></div>
-        <div id="output" class="output-body"><div class="empty result-empty"><span class="empty-icon">&#9638;</span><strong>Nothing executed yet</strong><p>Results appear after semantic resolution and deterministic compilation.</p></div></div>
-      </section>
-          <section class="panel trace-panel" aria-labelledby="trace-title">
-            <div class="panel-head trace-head">
-              <h3 id="trace-title">Semantic decisions <span id="call-count" class="count">0 calls</span></h3>
-              <div class="trace-actions">
-                <button id="expand-trace" class="text-button" type="button">Expand</button>
-                <button id="collapse-trace" class="text-button" type="button">Collapse</button>
-                <button id="export-trace" class="text-button" disabled>Export &darr;</button>
-              </div>
-            </div>
-            <div id="active-decision" class="active-decision" aria-live="polite">Most recent first · expand a decision to inspect alternatives.</div>
-            <div class="trace-content">
-            <details id="run-details" class="run-details">
-              <summary><span>Run details</span><b id="run-detail-count">0 events</b></summary>
-              <div id="run-detail-list" class="run-detail-list"><p class="run-detail-empty">Live build details will be retained here after the result arrives.</p></div>
-            </details>
-            <div id="trace" class="trace-list"><div class="empty"><span class="empty-icon">&#9638;</span><strong>A visible path to your answer</strong><p>Each completed skill appears here with its actual choices, probabilities, and evidence.</p></div></div>
-            </div>
-          </section>
-      </div>
-<div class="composer-dock">      <section class="composer" aria-label="Natural language request">
-        <div class="composer-head"><label for="prompt">Ask the database</label><span class="auto-operation">READ OR CHANGE · INFERRED FROM YOUR REQUEST</span></div>
-        <textarea id="prompt" rows="1" maxlength="2000" placeholder="Ask about this database... or choose an example on the left" aria-describedby="mode-hint"></textarea>
-        <div class="prompt-footer"><div id="mode-hint">Schema-grounded decisions. Parameterized SQL.</div><div class="run-control"><kbd>Ctrl &crarr;</kbd><button id="run" class="button primary" type="button">Explore query <span aria-hidden="true">&nearr;</span></button></div></div>
-      </section>
-</div>
-      <footer><span class="footer-tagline"><span class="footer-mark">&#9671;</span> Small decisions. Exact queries.</span><span class="footer-disclaimer">IntentSQL can make mistakes. Verify important results.</span><span class="footer-meta">IntentSQL &middot; MIT</span></footer>
-    </main>
+<a class="skip" href="#question">Skip to the question box</a>
+<header class="topbar">
+  <div class="brand"><span class="logo" aria-hidden="true">◆</span> IntentSQL</div>
+  <label class="db-picker">
+    <span class="sr-only">Database</span>
+    <select id="database" aria-label="Database"></select>
+  </label>
+  <div class="top-actions">
+    <button id="open-import" class="ghost" type="button">Import…</button>
+    <button id="open-console" class="ghost" type="button">SQL console</button>
+    <button id="open-connection" class="ghost" type="button"><span id="conn-dot" class="dot" aria-hidden="true"></span> Connection</button>
+    <label class="toggle" title="Show plan, Jev decisions, timings and tokens">
+      <input id="debug" type="checkbox"> Debug
+    </label>
+    <button id="theme" class="ghost icon" type="button" aria-label="Toggle dark mode">◐</button>
   </div>
+</header>
+
+<div class="layout">
+  <aside class="schema" aria-labelledby="schema-title">
+    <h2 id="schema-title">Schema <span id="schema-count" class="muted"></span></h2>
+    <input id="schema-filter" type="search" placeholder="Filter tables and columns" aria-label="Filter schema">
+    <div id="schema-list" class="schema-list"><p class="muted">Loading…</p></div>
+  </aside>
+
+  <main>
+    <form id="ask-form" class="ask" autocomplete="off">
+      <label for="question" class="ask-label">Ask a question about <strong id="db-name">this database</strong></label>
+      <div class="ask-row">
+        <textarea id="question" rows="2" maxlength="2000" placeholder="e.g. Which five districts have the highest per-pupil expenditure?" required></textarea>
+        <button id="ask" class="primary" type="submit">Ask</button>
+      </div>
+      <div id="examples" class="examples" aria-label="Example questions"></div>
+    </form>
+
+    <section id="result" class="result" hidden aria-live="polite">
+      <div class="status-row">
+        <span id="status" class="badge"></span>
+        <p id="explanation" class="explanation"></p>
+      </div>
+      <p id="message" class="message" hidden></p>
+      <div id="alternatives" class="alternatives" hidden></div>
+      <div class="sql-block">
+        <div class="sql-head"><span>SQL</span><button id="copy-sql" class="ghost small" type="button">Copy</button></div>
+        <pre id="sql"><code></code></pre>
+        <details id="params-details"><summary>Parameterized form</summary><pre id="sql-params"></pre></details>
+      </div>
+      <div class="table-head">
+        <span id="row-count" class="muted"></span>
+        <button id="export" class="ghost small" type="button">Export CSV</button>
+      </div>
+      <div id="table" class="table-wrap"></div>
+    </section>
+
+    <section id="debug-panel" class="debug" hidden aria-label="Debug information">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="decisions" aria-selected="true">Decisions</button>
+        <button role="tab" data-tab="intent">Semantic plan</button>
+        <button role="tab" data-tab="plan">SQL IR</button>
+        <button role="tab" data-tab="calls">Jev calls</button>
+        <button role="tab" data-tab="usage">Usage</button>
+      </div>
+      <div id="tab-body" class="tab-body"></div>
+    </section>
+
+    <section id="history" class="history" hidden>
+      <h2>Recent questions</h2>
+      <ul id="history-list"></ul>
+    </section>
+  </main>
 </div>
-<dialog id="settings-dialog" aria-labelledby="settings-title"><div class="query-dialog-head"><div><span class="eyebrow">SEMANTIC ENGINE</span><h2 id="settings-title">Connection settings</h2></div><button id="close-settings" class="icon-button" aria-label="Close connection settings">&times;</button></div><p>Your key stays on this machine and is never returned to the browser. Hosted providers receive the request and bounded schema/value evidence.</p><details id="connection-details" open><summary>Provider configuration</summary><div class="settings-fields">
-<label for="provider">Provider</label><select id="provider"><option value="jev">Jev</option><option value="openjev">OpenJEV</option><option value="laya">Laya local</option><option value="custom">Custom System One</option></select>
-<div class="connection-preset"><span>Each provider keeps its own settings.</span><button id="reset-provider" class="text-button" type="button">Use preset</button></div>
-<label for="endpoint">Endpoint URL</label><input id="endpoint" type="url" autocomplete="off" spellcheck="false">
-<p class="field-help">Full System One address, including its path. HTTPS for remote servers; HTTP is supported on localhost.</p>
-<div class="endpoint-address"><div><label for="endpoint-host">Host</label><input id="endpoint-host" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1"></div><div><label for="endpoint-port">Port</label><input id="endpoint-port" type="number" min="1" max="65535" placeholder="Default"></div></div>
-<label for="model">Model identifier</label><input id="model" type="text" autocomplete="off" spellcheck="false">
-<label for="api-key">API key &middot; leave blank to keep saved key</label><input id="api-key" type="password" autocomplete="new-password" placeholder="Stored only in your local workspace">
-<p id="key-status" class="field-help">Laya / custom may omit the model and key.</p><button id="save-connection" type="button" class="button primary">Save connection</button><p id="settings-feedback" role="status"></p>
-</div></details></dialog>
-  <dialog id="path-dialog"><form method="dialog"><h2>Open a local SQLite database</h2><p>IntentSQL imports a working copy into its local workspace.</p><label for="db-path">Absolute file path</label><input id="db-path" placeholder="C:\Data\example.db or /path/to/example.db" spellcheck="false"><div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="import-confirm" value="import" class="button primary">Import copy</button></div></form></dialog>
-  <dialog id="delete-db-dialog"><form method="dialog"><h2>Delete imported database?</h2><p id="delete-db-summary">This removes the local working copy. The original file you imported is not changed.</p><div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button id="delete-db-confirm" value="delete" class="button danger">Delete working copy</button></div></form></dialog>
-  <dialog id="db-inspector-dialog" class="query-dialog"><div class="query-dialog-body">
-    <div class="query-dialog-head"><div><span class="eyebrow">READ-ONLY SQLITE</span><h2 id="inspector-title">Database inspector</h2><p id="inspector-subtitle">Preview a table or run a read-only query against the selected working copy.</p></div><button id="close-inspector" class="icon-button" type="button" aria-label="Close database inspector">×</button></div>
-    <div id="inspector-overview" class="inspector-overview" hidden></div>
-    <label for="inspector-sql">SQL query</label>
-    <textarea id="inspector-sql" rows="5" spellcheck="false" placeholder="SELECT * FROM table_name LIMIT 20;"></textarea>
-    <div class="query-toolbar"><span class="muted small">SELECT, WITH, EXPLAIN and PRAGMA only · Ctrl/Cmd+Enter to run · max 500 returned rows</span><button id="run-inspector-query" class="button primary" type="button">Run query <span aria-hidden="true">↗</span></button></div>
-    <div id="inspector-error" class="query-error" hidden></div>
-    <div id="inspector-meta" class="table-meta"></div>
-    <div id="inspector-output" class="query-output"><div class="empty"><span>▦</span><strong>Run a query</strong><p>Results and SQLite errors appear here without using System One.</p></div></div>
-  </div></dialog>
-  <dialog id="confirm-dialog"><div><h2>Commit these changes?</h2><p id="confirm-summary"></p><p class="warning">This writes to your local working copy. You can undo the latest commit.</p><div class="dialog-actions"><button id="cancel-commit" class="button secondary">Keep preview</button><button id="confirm-commit" class="button danger">Commit changes</button></div></div></dialog>
+
+<dialog id="connection-dialog">
+  <form method="dialog" id="connection-form">
+    <h2>Jev connection</h2>
+    <p class="muted">The key is stored only in your local workspace and is never sent back to the browser.</p>
+    <label>Endpoint <input id="conn-url" type="url" required></label>
+    <label>Model <input id="conn-model" type="text"></label>
+    <label>API key <input id="conn-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+    <p id="conn-status" class="muted"></p>
+    <div class="dialog-actions"><button value="cancel" class="ghost">Close</button><button id="conn-save" class="primary" value="default">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="import-dialog">
+  <form method="dialog" id="import-form">
+    <h2>Import a SQLite database</h2>
+    <p class="muted">IntentSQL works on a copy in your local workspace; the original file is never modified.</p>
+    <label>Upload a file <input id="import-file" type="file" accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3"></label>
+    <p class="muted center">or</p>
+    <label>Copy from a local path <input id="import-path" type="text" placeholder="/path/to/database.sqlite" spellcheck="false"></label>
+    <p id="import-status" class="muted" role="status"></p>
+    <div class="dialog-actions">
+      <button id="delete-db" class="danger ghost" type="button" hidden>Delete current copy</button>
+      <button value="cancel" class="ghost">Close</button><button id="import-go" class="primary" value="default">Import</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="console-dialog" class="wide">
+  <form method="dialog" id="console-form">
+    <h2>Read-only SQL console</h2>
+    <p class="muted">Runs directly in SQLite on a read-only connection (no Jev involved). Writes are rejected.</p>
+    <textarea id="console-sql" rows="5" spellcheck="false" placeholder="SELECT * FROM table LIMIT 20"></textarea>
+    <p id="console-error" class="error" hidden></p>
+    <div id="console-table" class="table-wrap"></div>
+    <div class="dialog-actions"><button value="cancel" class="ghost">Close</button><button id="console-run" class="primary" value="default">Run</button></div>
+  </form>
+</dialog>
+
+<footer class="footer muted">IntentSQL answers with SQL you can read. Check important results — interpretations can be wrong.</footer>
 </body>
 </html>

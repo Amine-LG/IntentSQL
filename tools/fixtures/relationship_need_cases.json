@@ -1,9 +1,0 @@
-{
-  "suite": "relationship_need",
-  "cases": [
-    {"request": "Which 10 cities have the most public schools? Show the city and count, biggest first, alphabetically for ties.", "database": "dese", "table": "schools", "expected": false},
-    {"request": "Which schools had a perfect graduation rate?", "database": "dese", "table": "graduation_rates", "expected": true},
-    {"request": "What schools belong to the district called Cambridge?", "database": "dese", "table": "schools", "expected": true},
-    {"request": "How many episodes are in each season?", "database": "cyberchase", "table": "episodes", "expected": false}
-  ]
-}

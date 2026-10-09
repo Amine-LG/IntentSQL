@@ -1,9 +1,0 @@
-{
-  "suite": "group_ordering",
-  "cases": [
-    {"request": "Show each season and its episode count, highest count first.", "group_column": "season", "measure": "count of episodes", "expected": {"target": "measure", "direction": "DESC", "tie": null}},
-    {"request": "Count episodes in each season, ordered by season ascending.", "group_column": "season", "measure": "count of episodes", "expected": {"target": "key", "direction": "ASC", "tie": null}},
-    {"request": "Which ten cities have the most schools? Biggest count first, city alphabetically for ties.", "group_column": "city", "measure": "count of schools", "expected": {"target": "measure", "direction": "DESC", "tie": "ASC"}},
-    {"request": "Average salary by year, newest year first.", "group_column": "year", "measure": "average salary", "expected": {"target": "key", "direction": "DESC", "tie": null}}
-  ]
-}

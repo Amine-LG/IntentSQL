@@ -1,9 +1,0 @@
-{
-  "suite": "grouping",
-  "cases": [
-    {"request": "How many episodes are in each season?", "database": "cyberchase", "table": "episodes", "expected": "season"},
-    {"request": "Show the count of episodes by topic", "database": "cyberchase", "table": "episodes", "expected": "topic"},
-    {"request": "What is the average salary by year?", "database": "moneyball", "table": "salaries", "expected": "year"},
-    {"request": "For each city, count its schools", "database": "dese", "table": "schools", "expected": "city"}
-  ]
-}

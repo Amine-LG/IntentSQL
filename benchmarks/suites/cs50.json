@@ -1,0 +1,384 @@
+{
+ "suite": "cs50",
+ "description": "CS50 SQL exercises on the bundled databases (user-supplied prompts, gold SQL). Paraphrases test wording robustness.",
+ "cases": [
+  {
+   "id": "C1",
+   "database": "cyberchase.db",
+   "question": "Show me just the titles from the original season of Cyberchase.",
+   "gold_sql": "SELECT title FROM episodes WHERE season = 1",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 26
+  },
+  {
+   "id": "C2",
+   "database": "cyberchase.db",
+   "question": "For each season, what was its first episode? Give me the season and title.",
+   "gold_sql": "SELECT season, title FROM episodes WHERE episode_in_season = 1",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 14
+  },
+  {
+   "id": "C3",
+   "database": "cyberchase.db",
+   "question": "What's the PBS production code for Hackerized!?",
+   "gold_sql": "SELECT production_code FROM episodes WHERE title = 'Hackerized!'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [
+    "What's Hackerized!'s production code?",
+    "Find Hackerized! and tell me its PBS code.",
+    "I need the internal code corresponding to the episode named Hackerized!.",
+    "Which production identifier belongs to Hackerized!?",
+    "Can you look up Hackerized! for me? Just its production code."
+   ],
+   "expected_rows": 1
+  },
+  {
+   "id": "C4",
+   "database": "cyberchase.db",
+   "question": "Which episodes don't have a topic assigned yet? Just give me their titles.",
+   "gold_sql": "SELECT title FROM episodes WHERE topic IS NULL",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 26
+  },
+  {
+   "id": "C5",
+   "database": "cyberchase.db",
+   "question": "What episode aired on December 31, 2004?",
+   "gold_sql": "SELECT title FROM episodes WHERE air_date = '2004-12-31'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "C6",
+   "database": "cyberchase.db",
+   "question": "I only want the titles of season 6 episodes that actually came out during 2007.",
+   "gold_sql": "SELECT title FROM episodes WHERE season = 6 AND air_date BETWEEN '2007-01-01' AND '2007-12-31'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 2
+  },
+  {
+   "id": "C7",
+   "database": "cyberchase.db",
+   "question": "Show me the title and topic of every episode that teaches something about fractions.",
+   "gold_sql": "SELECT title, topic FROM episodes WHERE topic LIKE '%fractions%'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [
+    "Show me everything about episodes whose lessons involve fractions.",
+    "Which episodes deal with fractions? I need their names and topics.",
+    "I'm only interested in fraction-related episodes. Give me title plus topic.",
+    "Can you pull the episode names together with their topics wherever fractions are being taught?",
+    "Forget the other subjects; what Cyberchase episodes cover fractions?"
+   ],
+   "expected_rows": 6
+  },
+  {
+   "id": "C8",
+   "database": "cyberchase.db",
+   "question": "How many episodes came out from 2018 through 2023, including both years?",
+   "gold_sql": "SELECT COUNT(*) FROM episodes WHERE air_date BETWEEN '2018-01-01' AND '2023-12-31'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "C9",
+   "database": "cyberchase.db",
+   "question": "How many episodes were released during the first six years, 2002 through 2007?",
+   "gold_sql": "SELECT COUNT(*) FROM episodes WHERE air_date BETWEEN '2002-01-01' AND '2007-12-31'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "C10",
+   "database": "cyberchase.db",
+   "question": "Give me each episode's id, title and production code, sorted from the earliest production code onward.",
+   "gold_sql": "SELECT id, title, production_code FROM episodes ORDER BY production_code ASC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 140
+  },
+  {
+   "id": "C11",
+   "database": "cyberchase.db",
+   "question": "I only care about season 5. Give me its episode titles backwards alphabetically.",
+   "gold_sql": "SELECT title FROM episodes WHERE season = 5 ORDER BY title DESC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 10
+  },
+  {
+   "id": "C12",
+   "database": "cyberchase.db",
+   "question": "How many different episode titles are there?",
+   "gold_sql": "SELECT COUNT(DISTINCT title) FROM episodes",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "D1",
+   "database": "dese.db",
+   "question": "Give me the names and cities of Massachusetts public schools, but don't include charter schools.",
+   "gold_sql": "SELECT name, city FROM schools WHERE type = 'Public School'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1761
+  },
+  {
+   "id": "D2",
+   "database": "dese.db",
+   "question": "Which districts aren't operating anymore?",
+   "gold_sql": "SELECT name FROM districts WHERE name LIKE '%(non-op)'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 121
+  },
+  {
+   "id": "D3",
+   "database": "dese.db",
+   "question": "What's the average amount districts spend per pupil?",
+   "gold_sql": "SELECT AVG(per_pupil_expenditure) FROM expenditures",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "D4",
+   "database": "dese.db",
+   "question": "Which 10 cities have the most public schools? Show the city and count, biggest first, alphabetically for ties.",
+   "gold_sql": "SELECT city, COUNT(*) FROM schools WHERE type='Public School' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 10",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 10
+  },
+  {
+   "id": "D5",
+   "database": "dese.db",
+   "question": "Show cities that have no more than three public schools. Give me city and number of schools.",
+   "gold_sql": "SELECT city, COUNT(*) FROM schools WHERE type='Public School' GROUP BY city HAVING COUNT(*) <= 3 ORDER BY COUNT(*) DESC, city ASC",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 201
+  },
+  {
+   "id": "D6",
+   "database": "dese.db",
+   "question": "Which schools had a perfect graduation rate?",
+   "gold_sql": "SELECT schools.name FROM schools JOIN graduation_rates ON schools.id = graduation_rates.school_id WHERE graduation_rates.graduated = 100",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 9
+  },
+  {
+   "id": "D7",
+   "database": "dese.db",
+   "question": "What schools belong to the district called Cambridge?",
+   "gold_sql": "SELECT schools.name FROM schools JOIN districts ON schools.district_id = districts.id WHERE districts.name = 'Cambridge'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 17
+  },
+  {
+   "id": "D8",
+   "database": "dese.db",
+   "question": "Give me every school district together with its pupil count.",
+   "gold_sql": "SELECT districts.name, expenditures.pupils FROM districts JOIN expenditures ON districts.id = expenditures.district_id",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 396
+  },
+  {
+   "id": "D9",
+   "database": "dese.db",
+   "question": "Which district has the smallest number of pupils? Preserve ties.",
+   "gold_sql": "SELECT districts.name FROM districts JOIN expenditures ON districts.id=expenditures.district_id WHERE expenditures.pupils = (SELECT MIN(pupils) FROM expenditures)",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "D10",
+   "database": "dese.db",
+   "question": "What are the ten public school districts that spend the most per student?",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure FROM districts JOIN expenditures ON districts.id=expenditures.district_id WHERE districts.type='Public School District' ORDER BY expenditures.per_pupil_expenditure DESC LIMIT 10",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 10
+  },
+  {
+   "id": "D11",
+   "database": "dese.db",
+   "question": "Show every school with its graduation rate and the amount its district spends per pupil. Put the highest-spending schools first, and break spending ties alphabetically by school.",
+   "gold_sql": "SELECT schools.name, expenditures.per_pupil_expenditure, graduation_rates.graduated\n                     FROM schools JOIN districts ON schools.district_id = districts.id\n                     JOIN expenditures ON districts.id = expenditures.district_id\n                     JOIN graduation_rates ON schools.id = graduation_rates.school_id\n                     ORDER BY expenditures.per_pupil_expenditure DESC, schools.name ASC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 391
+  },
+  {
+   "id": "D12",
+   "database": "dese.db",
+   "question": "Find public school districts that spend more per pupil than the statewide district average and also have a higher-than-average percentage of exemplary teachers. Show district, expenditure and exemplary percentage. Rank exemplary percentage highest first, then expenditure highest first.",
+   "gold_sql": "SELECT districts.name, expenditures.per_pupil_expenditure, staff_evaluations.exemplary\n                     FROM districts JOIN expenditures ON districts.id = expenditures.district_id\n                     JOIN staff_evaluations ON districts.id = staff_evaluations.district_id\n                     WHERE districts.type = 'Public School District'\n                     AND expenditures.per_pupil_expenditure > (SELECT AVG(per_pupil_expenditure) FROM expenditures)\n                     AND staff_evaluations.exemplary > (SELECT AVG(exemplary) FROM staff_evaluations)\n                     ORDER BY staff_evaluations.exemplary DESC, expenditures.per_pupil_expenditure DESC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 65
+  },
+  {
+   "id": "M1",
+   "database": "moneyball.db",
+   "question": "How did the average MLB salary change over time? Give me year and average salary rounded to two decimals, newest year first.",
+   "gold_sql": "SELECT year, ROUND(AVG(salary), 2) FROM salaries GROUP BY year ORDER BY year DESC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 17
+  },
+  {
+   "id": "M2",
+   "database": "moneyball.db",
+   "question": "Show me Cal Ripken's salary history, newest year first.",
+   "gold_sql": "SELECT salaries.year, salaries.salary FROM players JOIN salaries ON players.id = salaries.player_id\n                     WHERE players.first_name = 'Cal' AND players.last_name = 'Ripken' ORDER BY salaries.year DESC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 17
+  },
+  {
+   "id": "M3",
+   "database": "moneyball.db",
+   "question": "Give me the yearly home-run history for the Ken Griffey who was born in 1969. Newest season first.",
+   "gold_sql": "SELECT performances.year, performances.HR FROM players JOIN performances ON players.id = performances.player_id\n                     WHERE players.first_name = 'Ken' AND players.last_name = 'Griffey' AND players.birth_year = 1969\n                     ORDER BY performances.year DESC",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 13
+  },
+  {
+   "id": "M4",
+   "database": "moneyball.db",
+   "question": "Who were the 50 lowest-paid players in 2001? Show first name, last name and salary. Cheapest first. Resolve equal salaries by first name, last name, then player id.",
+   "gold_sql": "SELECT players.first_name, players.last_name, salaries.salary FROM players\n                     JOIN salaries ON players.id = salaries.player_id WHERE salaries.year = 2001\n                     ORDER BY salaries.salary ASC, players.first_name ASC, players.last_name ASC, players.id ASC LIMIT 50",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 50
+  },
+  {
+   "id": "M5",
+   "database": "moneyball.db",
+   "question": "Which teams did Satchel Paige play for? Don't repeat a team.",
+   "gold_sql": "SELECT DISTINCT teams.name FROM players JOIN performances ON players.id = performances.player_id\n                     JOIN teams ON performances.team_id = teams.id WHERE players.first_name = 'Satchel' AND players.last_name = 'Paige'",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 3
+  },
+  {
+   "id": "M6",
+   "database": "moneyball.db",
+   "question": "Which five teams produced the most total hits in 2001? Show the team and total hits, highest first.",
+   "gold_sql": "SELECT teams.name, SUM(performances.H) FROM teams JOIN performances ON teams.id = performances.team_id\n                     WHERE performances.year = 2001 GROUP BY teams.id ORDER BY SUM(performances.H) DESC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 5
+  },
+  {
+   "id": "M7",
+   "database": "moneyball.db",
+   "question": "Who received the highest salary in the entire database? Give me the player's first and last name.",
+   "gold_sql": "SELECT players.first_name, players.last_name FROM players JOIN salaries ON players.id = salaries.player_id\n                     WHERE salaries.salary = (SELECT MAX(salary) FROM salaries)",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [
+    "Who got paid more than anyone else ever?",
+    "Who's the highest-paid player in this data?",
+    "Find whoever received the biggest single salary.",
+    "Which player has the all-time maximum salary?",
+    "I just want the name of whoever got the largest paycheck."
+   ],
+   "expected_rows": 1
+  },
+  {
+   "id": "M8",
+   "database": "moneyball.db",
+   "question": "What salary did the top home-run hitter of 2001 receive that year?",
+   "gold_sql": "SELECT salaries.salary FROM salaries JOIN performances\n                     ON salaries.player_id = performances.player_id AND salaries.year = performances.year\n                     WHERE performances.year = 2001 AND performances.HR =\n                     (SELECT MAX(HR) FROM performances WHERE year = 2001)",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 1
+  },
+  {
+   "id": "M9",
+   "database": "moneyball.db",
+   "question": "Which five teams had the lowest average salary in 2001? Give me team and average salary rounded to two decimals.",
+   "gold_sql": "SELECT teams.name, ROUND(AVG(salaries.salary), 2) FROM teams JOIN salaries\n                     ON teams.id = salaries.team_id WHERE salaries.year = 2001 GROUP BY teams.id\n                     ORDER BY ROUND(AVG(salaries.salary), 2) ASC LIMIT 5",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 5
+  },
+  {
+   "id": "M10",
+   "database": "moneyball.db",
+   "question": "For every player and year, show first name, last name, salary, home runs and year. Make sure salary and performance refer to the same year.",
+   "gold_sql": "SELECT players.first_name, players.last_name, salaries.salary, performances.HR, salaries.year\n                     FROM players JOIN salaries ON players.id = salaries.player_id\n                     JOIN performances ON players.id = performances.player_id AND salaries.year = performances.year\n                     ORDER BY players.id ASC, salaries.year DESC, performances.HR DESC, salaries.salary DESC",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 14915
+  },
+  {
+   "id": "M11",
+   "database": "moneyball.db",
+   "question": "Who were the ten cheapest players per hit in 2001? Ignore players with zero hits. Show first name, last name and dollars per hit.",
+   "gold_sql": "SELECT players.first_name, players.last_name, salaries.salary / performances.H\n                     FROM players JOIN salaries ON players.id = salaries.player_id\n                     JOIN performances ON players.id = performances.player_id AND salaries.year = performances.year\n                     WHERE salaries.year = 2001 AND performances.H > 0\n                     ORDER BY salaries.salary / performances.H ASC, players.first_name ASC, players.last_name ASC LIMIT 10",
+   "ordered": true,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 10
+  },
+  {
+   "id": "M12",
+   "database": "moneyball.db",
+   "question": "Which players are simultaneously among the ten cheapest per hit and the ten cheapest per RBI in 2001?",
+   "gold_sql": "WITH costs AS (\n                         SELECT players.id, players.first_name, players.last_name,\n                                salaries.salary * 1.0 / performances.H AS per_hit,\n                                salaries.salary * 1.0 / performances.RBI AS per_rbi\n                         FROM players JOIN salaries ON players.id = salaries.player_id\n                         JOIN performances ON players.id = performances.player_id AND salaries.year = performances.year\n                         WHERE salaries.year = 2001 AND performances.H > 0 AND performances.RBI > 0\n                     ), hit_top AS (SELECT id FROM costs ORDER BY per_hit ASC LIMIT 10),\n                     rbi_top AS (SELECT id FROM costs ORDER BY per_rbi ASC LIMIT 10)\n                     SELECT DISTINCT costs.first_name, costs.last_name FROM costs\n                     JOIN hit_top USING(id) JOIN rbi_top USING(id)",
+   "ordered": false,
+   "expect": "answer",
+   "paraphrases": [],
+   "expected_rows": 6
+  }
+ ]
+}

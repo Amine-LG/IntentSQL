@@ -1,9 +1,0 @@
-{
-  "suite": "condition_logic",
-  "cases": [
-    {"request": "episodes in season 6 that aired in 2007", "columns": ["season", "air_date"], "expected": "AND"},
-    {"request": "episodes in season 2 or teaching fractions", "columns": ["season", "topic"], "expected": "OR"},
-    {"request": "schools in Cambridge that are public schools", "columns": ["city", "type"], "expected": "AND"},
-    {"request": "players named Cal Ripken born in 1960", "columns": ["first_name", "last_name", "birth_year"], "expected": "AND"}
-  ]
-}

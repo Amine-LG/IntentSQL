@@ -1,0 +1,2 @@
+[console_scripts]
+intent-sql = intentsql.cli:main

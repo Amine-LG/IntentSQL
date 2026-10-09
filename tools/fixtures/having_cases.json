@@ -1,9 +1,0 @@
-{
-  "suite": "having",
-  "cases": [
-    {"request": "Show cities with no more than three public schools", "group_key": "city", "measure": "count of schools", "expected": {"operator": "<=", "value": 3}},
-    {"request": "Show cities with more than 5 schools", "group_key": "city", "measure": "count of schools", "expected": {"operator": ">", "value": 5}},
-    {"request": "Show seasons with at least 10 episodes", "group_key": "season", "measure": "count of episodes", "expected": {"operator": ">=", "value": 10}},
-    {"request": "Show categories with fewer than two records", "group_key": "category", "measure": "count of records", "expected": {"operator": "<", "value": 2}}
-  ]
-}

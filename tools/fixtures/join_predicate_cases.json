@@ -1,9 +1,0 @@
-{
-  "suite": "join_predicate",
-  "cases": [
-    {"request": "Which schools had a perfect graduation rate?", "database": "dese", "tables": ["graduation_rates", "schools"], "expected": "graduation_rates.graduated"},
-    {"request": "What schools belong to the district called Cambridge?", "database": "dese", "tables": ["schools", "districts"], "expected": "districts.name"},
-    {"request": "What are the public school districts that spend the most per student?", "database": "dese", "tables": ["districts", "expenditures"], "expected": "districts.type"},
-    {"request": "Show the players paid in 2001", "database": "moneyball", "tables": ["salaries", "players"], "expected": "salaries.year"}
-  ]
-}
