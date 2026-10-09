@@ -106,6 +106,15 @@ class AdvancedTest(unittest.TestCase):
         self.assertEqual(rows(result), [("Ann",)])
         self.assertIn("INTERSECT", result.sql)
 
+    def test_sum_is_not_inflated_by_filters_through_related_rows(self):
+        # Orders 1, 2 and 4 contain a Latte or a Mocha: 10 + 20 + 7.5.  Joining the order
+        # lines would add order 4 (both products) twice: 45.
+        result = self.ask("What is the total of the orders that include Latte or Mocha?", [
+            ("^out_", "show the order total in", "the total order total"),
+            ("^role_", "", "filtered by"),
+            ("^lop_", "", "exactly this value")])
+        self.assertEqual(rows(result), [(37.5,)])
+
     def test_period_parsing(self):
         today = date(2026, 10, 9)
         found = {text: value[:2] for _, _, text, value in periods(

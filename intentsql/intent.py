@@ -523,8 +523,35 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
                                  join_choices)
         return ir.SetOp("INTERSECT", _select(schema, left, "a_", join_choices),
                         _select(schema, right, "b_", join_choices))
-    semi = _semi_join(schema, intent, join_choices) if SEMI_JOIN_FILTERS else None
+    semi = (_semi_join(schema, intent, join_choices) or _semi_join_measures(schema, intent, join_choices)
+            if SEMI_JOIN_FILTERS else None)
     return semi or _select(schema, intent, "", join_choices)
+
+
+def _semi_join_measures(schema: Schema, intent: Intent, join_choices: dict[str, str]) -> ir.Select | None:
+    """'the total of orders that contain a Latte': a filter through an order's lines must
+    not add the order total once per matching line.  Filters on tables related one-to-many
+    to the summed table become a membership test on its key."""
+    measured = [o for o in intent.outputs if o.func in ("SUM", "AVG") and o.column and not o.per]
+    if not measured or intent.connector != "AND" or intent.both is not None or intent.excluded:
+        return None
+    hosts = {t for o in measured for t in schema.requires(o.column or "")}
+    if len(hosts) != 1:
+        return None
+    table = next(iter(hosts))
+    pk = schema.table(table).primary_key
+    if len(pk) != 1:
+        return None
+    moved = [c for c in intent.conditions if c.kind not in ("having", "having_vs") and c.tables
+             and all(t != table and schema.one_to_many(table, t) for t in c.tables)]
+    if not moved:
+        return None
+    key = f"{schema.table(table).name}.{pk[0]}"
+    inner = _select(schema, intent.with_(outputs=(OutputItem(None, key),), conditions=tuple(moved), group_by=(),
+                                         order=(), limit=None, offset=None, distinct=False, subject=table),
+                    "m_", join_choices)
+    outer = intent.with_(conditions=tuple(c for c in intent.conditions if c not in moved))
+    return _select(schema, outer, "", join_choices, extra_where=lambda scope: ir.InQuery(scope.col(key), inner))
 
 
 def _semi_join(schema: Schema, intent: Intent, join_choices: dict[str, str]) -> ir.Select | None:
