@@ -20,6 +20,7 @@ from intentsql.text import NUMBER_WORDS, STOPWORDS, Token, lemma, stem, tokenize
 
 _QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”|‘([^’]+)’|(?<![A-Za-z])'([^']+)'(?![A-Za-z])")
 _NUMBER = re.compile(r"(?<![\w.])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])[-+]?\d+(?:\.\d+)?(?![\w])")
+_DATE = re.compile(r"(?<![\w-])\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?(?![\w-])")
 MAX_NGRAM = 8
 
 
@@ -28,7 +29,7 @@ class Literal:
     id: str
     text: str                      # surface text in the request
     value: Any                     # number, or canonical stored text
-    kind: str                      # "number" | "text"
+    kind: str                      # "number" | "text" | "date"
     start: int
     end: int
     columns: tuple[str, ...] = ()  # column keys known to store this value
@@ -37,7 +38,7 @@ class Literal:
     alternatives: tuple[tuple[str, str], ...] = ()   # (column key, stored value) variants
 
     def describe(self) -> str:
-        return f'"{self.text}"' if self.kind == "text" else str(self.text)
+        return str(self.text) if self.kind == "number" else f'"{self.text}"'
 
 
 @dataclass
@@ -167,6 +168,14 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
         else:
             add(text, stored, "text", match.start(), match.end(), matches, quoted=True,
                 exact=bool(matches))
+
+    # 1b. ISO dates are single text literals, not three numbers.
+    for match in _DATE.finditer(question):
+        if free(match.start(), match.end()):
+            text = match.group(0)
+            matches = index.exact.get(_normalize(text), ())
+            add(text, matches[0][1] if matches else text, "date", match.start(), match.end(),
+                matches, exact=bool(matches))
 
     # 2. Longest stored-value matches over token n-grams.
     spans = []

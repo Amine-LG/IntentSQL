@@ -55,7 +55,7 @@ class Condition:
     in_values    column in values (negated: not in)
     null         column is null (negated: is not null)
     absent       subject has no related ``table`` rows (matching ``inner``)
-    related      subject has related ``table`` rows (realized as an inner join)
+    related      subject has related ``table`` rows (semi-join: IN, no row multiplication)
     same_as      column equals that of the record(s) matching ``inner`` ("same department as Clara")
     vs_aggregate column op func(agg_column) over all rows of its table
     having       func(column or COUNT(*) of table) op values[0], per group
@@ -74,7 +74,7 @@ class Condition:
         if self.kind == "absent":
             return ()
         if self.kind == "related":
-            return (self.table,) if self.table else ()
+            return ()      # realized as a semi-join (IN), so it never multiplies rows
         if self.column:
             return (self.column.split(".", 1)[0],)
         return (self.table,) if self.kind == "having" and self.table else ()
@@ -284,8 +284,8 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
         sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
                         from_=inner_from)
         return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
-    if cond.kind == "absent":
-        return _absent(schema, scope, cond, counter, join_choices)
+    if cond.kind in ("absent", "related"):
+        return _membership(schema, scope, cond, counter, join_choices, negated=cond.kind == "absent")
     if cond.kind == "same_as":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
@@ -299,8 +299,8 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     raise PlanError(f"Unsupported condition kind {cond.kind}")
 
 
-def _absent(schema: Schema, scope: _Scope, cond: Condition, counter: list[int],
-            join_choices: dict[str, str]) -> ir.Cond:
+def _membership(schema: Schema, scope: _Scope, cond: Condition, counter: list[int],
+                join_choices: dict[str, str], negated: bool) -> ir.Cond:
     subject = next(iter(scope.aliases))
     target = cond.table
     paths = schema.shortest_paths(subject, target, limit=1)
@@ -320,7 +320,7 @@ def _absent(schema: Schema, scope: _Scope, cond: Condition, counter: list[int],
     where += [_condition(schema, inner_scope, c, counter, join_choices) for c in cond.inner]
     sub = ir.Select(items=(ir.SelectItem(ir.Col(inner_scope.alias(first.table), link_col)),),
                     from_=inner_from, where=ir.conjoin(where))
-    return ir.InQuery(ir.Col(scope.alias(subject), subject_col), sub, negated=True)
+    return ir.InQuery(ir.Col(scope.alias(subject), subject_col), sub, negated=negated)
 
 
 def query_tables(intent: Intent) -> list[str]:
@@ -343,6 +343,19 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
     if not intent.outputs:
         raise PlanError("Nothing to return")
     join_choices = dict(intent.join_choices)
+    having = [c for c in intent.conditions if c.kind == "having"]
+    counted = list(dict.fromkeys(c.table for c in having if c.table and not c.column))
+    if len(counted) >= 2 and not intent.order:
+        # Counts over different related tables cannot share one join (rows would
+        # multiply): evaluate each separately and combine the groups.
+        rest = [c for c in intent.conditions if c.kind != "having"]
+        parts = [intent.with_(conditions=tuple(rest + [c for c in having if c.table == t]))
+                 for t in counted]
+        op = "UNION" if intent.connector == "OR" else "INTERSECT"
+        query: ir.Query = _select(schema, parts[0], "p0_", join_choices)
+        for i, part in enumerate(parts[1:], start=1):
+            query = ir.SetOp(op, query, _select(schema, part, f"p{i}_", join_choices))
+        return query
     if intent.excluded:
         kept = intent.with_(excluded=())
         removed = intent.with_(excluded=(), conditions=intent.excluded, both=None, order=(),
@@ -377,7 +390,8 @@ def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str,
     items = tuple(ir.SelectItem(_agg_expr(scope, o.func, o.column, o.table, o.distinct))
                   for o in intent.outputs)
     where_conds = [_condition(schema, scope, c, counter, join_choices)
-                   for c in intent.conditions if c.kind not in ("having", "related")]
+                   for c in intent.conditions if c.kind != "having"
+                   and not (c.kind == "related" and c.table in scope.aliases)]
     if intent.connector == "OR" and len(where_conds) > 1:
         where: ir.Cond | None = ir.Or(tuple(where_conds))
     else:
