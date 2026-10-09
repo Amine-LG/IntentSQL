@@ -25,6 +25,13 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?
 _NUMERIC = re.compile(r"^\s*[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?\s*$")
 _IDENTIFIER = re.compile(r"(^|_)[Ii][Dd]$|[a-z]I[Dd]$|ID$")
 VALUE_INDEX_LIMIT = 5000
+UNIQUE_MIN_ROWS = 20
+# Same-named columns that say nothing about a relationship ('year' in salary and team).
+_GENERIC_NAMES = frozenset({
+    "name", "id", "description", "details", "type", "year", "date", "month", "day", "time", "status",
+    "count", "amount", "price", "value", "score", "rank", "title", "note", "notes", "comment",
+    "comments", "created_at", "updated_at", "age", "gender", "sex", "city", "country", "state",
+    "address", "phone", "email", "height", "weight", "total", "rating", "level", "position"})      # distinct-value statistics identify rows only in tables at least this large
 SAMPLE_SIZE = 300
 
 
@@ -175,8 +182,8 @@ class Schema:
             for b in names[i + 1:]:
                 if any(fk.other(a) == b for fk in self.foreign_keys if a in (fk.table, fk.ref_table)):
                     continue
-                for col in self.tables[a].columns:
-                    if col.name.lower() in ("name", "id", "description", "details", "type"):
+                for col in sorted(self.tables[a].columns, key=lambda c: not c.is_identifier):
+                    if col.name.lower() in _GENERIC_NAMES or col.kind in (DATE, BOOLEAN):
                         continue
                     try:
                         other = self.tables[b].column(col.name)
@@ -186,6 +193,20 @@ class Schema:
                         edges.append(ForeignKey(a, (col.name,), b, (other.name,), declared=False))
                         break
         return tuple(edges)
+
+    def unique_like(self, key: str) -> bool:
+        """True when a column identifies its table's rows: a single-column primary key, a
+        name or title, or (in tables large enough for the statistic to mean something)
+        nearly all-distinct values.  In a five-row table every column looks unique."""
+        column = self.column(key)
+        table = self.tables[column.table]
+        if column.primary_key and len(table.primary_key) == 1:
+            return True
+        if not column.distinct_count or table.row_count <= 1:
+            return False
+        if column.kind == TEXT and re.search(r"\b(name|title)\b", column.label):
+            return column.distinct_count >= 0.9 * table.row_count
+        return table.row_count >= UNIQUE_MIN_ROWS and column.distinct_count >= 0.9 * table.row_count
 
     def is_role(self, table: str) -> bool:
         return self.tables[table].role_of is not None

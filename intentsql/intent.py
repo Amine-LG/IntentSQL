@@ -276,11 +276,7 @@ def _effective_groups(intent: Intent, schema: Schema | None = None) -> tuple[str
         tables = {key.split(".", 1)[0] for key in plain}
         if len(tables) == 1:
             table = schema.table(next(iter(tables)))
-            identifying = any(
-                (c := schema.column(k)).primary_key or (
-                    c.distinct_count and table.row_count > 1
-                    and c.distinct_count >= 0.9 * table.row_count)
-                for k in plain)
+            identifying = any(schema.unique_like(k) for k in plain)
             if identifying and len(table.primary_key) == 1:
                 return (f"{table.name}.{table.primary_key[0]}",)
     return plain
@@ -654,12 +650,10 @@ def _lists_records(schema: Schema, intent: Intent) -> bool:
     subject = intent.subject
     if not subject or len(schema.table(subject).primary_key) != 1:
         return False
-    table = schema.table(subject)
     for item in intent.outputs:
         if item.column and not item.is_aggregate and item.column.split(".", 1)[0] == subject:
             column = schema.column(item.column)
-            if column.primary_key or (column.distinct_count and table.row_count > 1
-                                      and column.distinct_count >= 0.9 * table.row_count):
+            if schema.unique_like(item.column):
                 return True
             if re.search(r"\b(name|title)\b", column.label):
                 return True     # a record's label: two customers named Ann Lee are two customers

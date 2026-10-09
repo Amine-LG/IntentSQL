@@ -1252,6 +1252,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                     and not schema.is_key(o.column)
                     and not any(o.column in schema.equivalents(k) for k in group_by)
                     and not _identifies_rows(schema, o.column.split(".")[0], [o])
+                    and _categorical(schema, o.column)
                     and o.column.split(".")[0] == group_by[0].split(".")[0]):
                 group_by.append(o.column)
         outputs = [o for o in outputs if not _ungrouped(schema, o, group_by)]
@@ -1396,14 +1397,11 @@ def _dedupe_absent(schema: Schema, conditions: list[Condition], answers: dict[st
 
 def _groups_are_singletons(schema: Schema, table: str, keys: list[str]) -> bool:
     """True when every group holds one row of ``table`` (grouped by a unique column)."""
-    t = schema.table(table)
     for key in keys:
         for member in schema.equivalents(key):
             if member.split(".")[0] != table:
                 continue
-            column = schema.column(member)
-            if (column.primary_key and len(t.primary_key) == 1) or (
-                    column.distinct_count and column.distinct_count == t.row_count and t.row_count > 1):
+            if schema.unique_like(member):
                 return True
     return False
 
@@ -1565,6 +1563,16 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
     return intent.with_(via=tuple(dict.fromkeys(via)))
 
 
+def _categorical(schema: Schema, key: str) -> bool:
+    """A column whose values repeat across rows ('gender', 'rank'): a sensible group key.
+    Measures and per-record labels are not, even in a table too small to tell."""
+    column = schema.column(key)
+    rows = schema.tables[column.table].row_count
+    if not column.distinct_count or column.distinct_count >= max(2, 0.9 * rows):
+        return False
+    return column.kind != NUMBER or column.distinct_count <= 12
+
+
 def _ungrouped(schema: Schema, item: OutputItem, group_by: list[str]) -> bool:
     """A plain value that varies within a group (allergy name per allergy type) has no
     single value to show; values of a record that the group identifies are fine."""
@@ -1687,9 +1695,7 @@ def _identifies_rows(schema: Schema, table: str, outputs: list[OutputItem]) -> b
     t = schema.table(table)
     for o in outputs:
         if o.column and not o.is_aggregate and o.column.split(".")[0] == t.name:
-            c = schema.column(o.column)
-            if c.primary_key or (c.distinct_count and t.row_count > 1
-                                 and c.distinct_count >= 0.9 * t.row_count):
+            if schema.unique_like(o.column):
                 return True
     return False
 
