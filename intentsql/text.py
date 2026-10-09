@@ -92,3 +92,17 @@ ORDINALS = {
     "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
     "eighth": 8, "ninth": 9, "tenth": 10,
 }
+
+
+def stem(word: str) -> str:
+    """Lemma plus crude verb-suffix stripping, for lexical linking only."""
+    w = lemma(word)
+    for suffix in ("ing", "ed"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 4:
+            w = w[: -len(suffix)]
+            if len(w) >= 4 and w[-1] == w[-2] and w[-1] not in "aeiouls":
+                w = w[:-1]
+            break
+    if w.endswith("e") and len(w) > 4:
+        w = w[:-1]
+    return w

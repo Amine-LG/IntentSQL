@@ -116,6 +116,7 @@ class Schema:
     tables: dict[str, Table]
     foreign_keys: tuple[ForeignKey, ...]
     values: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _use_soft: bool = field(default=False, repr=False)
 
     # ---- lookup -------------------------------------------------------------
     def table(self, name: str) -> Table:
@@ -135,8 +136,33 @@ class Schema:
         return tuple(c for t in self.tables.values() for c in t.columns)
 
     def edges(self, table: str) -> list[ForeignKey]:
-        return [fk for fk in self.foreign_keys if table in (fk.table, fk.ref_table)
-                and fk.table != fk.ref_table]
+        edges = [fk for fk in self.foreign_keys if table in (fk.table, fk.ref_table)
+                 and fk.table != fk.ref_table]
+        if self._use_soft:
+            edges += [fk for fk in self.soft_edges if table in (fk.table, fk.ref_table)]
+        return edges
+
+    @cached_property
+    def soft_edges(self) -> tuple[ForeignKey, ...]:
+        """Undeclared links between same-named, same-kind columns of otherwise
+        unconnected tables (used only when no declared path exists)."""
+        edges = []
+        names = list(self.tables)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                if any(fk.other(a) == b for fk in self.foreign_keys if a in (fk.table, fk.ref_table)):
+                    continue
+                for col in self.tables[a].columns:
+                    if col.name.lower() in ("name", "id", "description", "details", "type"):
+                        continue
+                    try:
+                        other = self.tables[b].column(col.name)
+                    except KeyError:
+                        continue
+                    if other.kind == col.kind:
+                        edges.append(ForeignKey(a, (col.name,), b, (other.name,), declared=False))
+                        break
+        return tuple(edges)
 
     def neighbors(self, table: str) -> list[str]:
         return sorted({fk.other(table) for fk in self.edges(table)})
@@ -181,7 +207,22 @@ class Schema:
         return best
 
     def join_tree(self, tables: Iterable[str], root: str | None = None) -> list[JoinStep] | None:
-        """Greedy Steiner tree connecting ``tables``; None when disconnected."""
+        """Greedy Steiner tree connecting ``tables``; None when disconnected.
+
+        Declared/inferred foreign keys are used first; same-named columns serve
+        as a fallback only when the declared graph cannot connect the tables.
+        """
+        tables = list(tables)
+        tree = self._join_tree(tables, root)
+        if tree is None and self.soft_edges:
+            self._use_soft = True
+            try:
+                tree = self._join_tree(tables, root)
+            finally:
+                self._use_soft = False
+        return tree
+
+    def _join_tree(self, tables: Iterable[str], root: str | None = None) -> list[JoinStep] | None:
         wanted = list(dict.fromkeys(tables))
         if not wanted:
             return []
@@ -206,6 +247,44 @@ class Schema:
             remaining = [t for t in remaining if t not in in_tree]
             assert best_target is not None
         return steps
+
+    @cached_property
+    def _classes(self) -> dict[str, tuple[str, ...]]:
+        """Columns holding the same value through FK links (child -> parent chains)."""
+        parent: dict[str, str] = {}
+
+        def find(key: str) -> str:
+            while parent.get(key, key) != key:
+                key = parent[key]
+            return key
+
+        for fk in self.foreign_keys:
+            for column, ref in zip(fk.columns, fk.ref_columns):
+                a, b = find(f"{fk.table}.{column}"), find(f"{fk.ref_table}.{ref}")
+                if a != b:
+                    parent[a] = b
+        groups: dict[str, list[str]] = {}
+        for column in self.columns:
+            groups.setdefault(find(column.key), []).append(column.key)
+        return {key: tuple(members) for members in groups.values() for key in members}
+
+    def equivalents(self, key: str) -> tuple[str, ...]:
+        """All columns that store the same values as ``key`` via foreign keys."""
+        return self._classes.get(key, (key,))
+
+    def canonical(self, key: str) -> str:
+        """Representative of an equivalence class: the referenced key column if any."""
+        members = self.equivalents(key)
+        if len(members) == 1:
+            return key
+        referenced = {f"{fk.ref_table}.{c}" for fk in self.foreign_keys for c in fk.ref_columns}
+        for member in members:
+            if member in referenced and self.column(member).primary_key:
+                return member
+        for member in members:
+            if member in referenced:
+                return member
+        return members[0]
 
     def parallel_edges(self, a: str, b: str) -> list[ForeignKey]:
         return [fk for fk in self.edges(a) if fk.other(a) == b]
