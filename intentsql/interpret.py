@@ -251,7 +251,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         if column.is_identifier or column.key in literal_classes:
             continue
         values = schema.values.get(column.key, ())
-        if column.kind in (TEXT, BOOLEAN) and 2 <= len(values) <= CATEGORICAL_MAX:
+        if (column.kind in (TEXT, BOOLEAN) or column.kind == NUMBER) and 2 <= len(values) <= CATEGORICAL_MAX:
             phrase = column_phrase(schema, column.key)
             cands.categorical[column.key] = [Option(f"v{i}", f"only results whose {phrase} is '{v}'", v)
                                              for i, v in enumerate(values)]
@@ -787,8 +787,9 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             conditions.append(Condition("absent", None, table=target, inner=tuple(inner)))
             subject = rel_subject
 
+    conditions = _anti_joins(schema, conditions, subject)
     conditions = _dedupe_absent(schema, conditions, answers, cands)
-    conditions, connector, both = _normalize_conditions(g, conditions, connector, subject)
+    conditions, connector, both = _normalize_conditions(g, conditions, connector, subject, outputs)
     group_keys = group_by or [o.column for o in outputs if o.column and not o.is_aggregate]
     order, conditions = _retarget_self_counts(g, cands, answers, subject, order, conditions,
                                               group_keys)
@@ -810,6 +811,14 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                 outputs.insert(0, OutputItem(None, label))
         outputs = [o for i, o in enumerate(outputs) if o not in outputs[:i]]
     offset = _ordinal_offset(g.question) if order and limit == 1 else None
+    if (order and limit == 1 and offset is None and not group_by and not order[0].is_aggregate
+            and order[0].column and subject and order[0].column.split(".")[0] != subject
+            and schema.one_to_many(order[0].column.split(".")[0], subject)):
+        # 'scientists working on the project with the most hours': the superlative picks
+        # a related record; every result linked to it qualifies (not just one row).
+        conditions.append(Condition("vs_aggregate", order[0].column, "=",
+                                    func="MAX" if order[0].desc else "MIN"))
+        order, limit = (), None
     if any(o.is_aggregate for o in outputs) and not group_by and not any(
             not o.is_aggregate for o in outputs):
         distinct = False
@@ -823,6 +832,22 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     intent = rebind_equivalents(schema, intent)
     intent = _choose_routes(g, intent, answers, followup, record)
     return Interpretation(intent, record.decisions, record.uncertain, followup=followup or None)
+
+
+def _anti_joins(schema: Schema, conditions: list[Condition], subject: str | None) -> list[Condition]:
+    """'movies not reviewed by Chris Jackson' is not 'reviewer != Chris Jackson': a
+    negated condition on records related one-to-many is an anti-join (NOT IN)."""
+    if subject is None:
+        return conditions
+    out = []
+    for c in conditions:
+        table = c.column.split(".")[0] if c.column else None
+        if (c.kind in ("compare", "text") and c.op in ("!=", "not_contains") and table
+                and table != subject and schema.one_to_many(subject, table)):
+            out.append(Condition("absent", None, table=table, inner=(_positive(c),)))
+        else:
+            out.append(c)
+    return out
 
 
 def _positive(cond: Condition) -> Condition:
@@ -1040,8 +1065,32 @@ def _comparable(value: Any) -> bool:
         re.match(r"^\d{4}-\d{1,2}-\d{1,2}", value)))
 
 
+def _text_between(g: Grounding, a: Any, b: Any) -> str | None:
+    spans = {}
+    for lit in g.literals:
+        for value in (a, b):
+            if lit.value == value and value not in spans:
+                spans[value] = (lit.start, lit.end)
+    if len(spans) < 2:
+        return None
+    (s1, e1), (s2, e2) = sorted(spans.values())
+    return g.question[e1:s2]
+
+
+def _identifies_rows(schema: Schema, table: str, outputs: list[OutputItem]) -> bool:
+    t = schema.table(table)
+    for o in outputs:
+        if o.column and not o.is_aggregate and o.column.split(".")[0] == t.name:
+            c = schema.column(o.column)
+            if c.primary_key or (c.distinct_count and t.row_count > 1
+                                 and c.distinct_count >= 0.9 * t.row_count):
+                return True
+    return False
+
+
 def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: str,
-                          subject: str | None) -> tuple[list[Condition], str, tuple[int, int] | None]:
+                          subject: str | None, outputs: list[OutputItem] = ()
+                          ) -> tuple[list[Condition], str, tuple[int, int] | None]:
     """Deterministic clean-ups that need no semantic judgment."""
     if RANGE_CUE.search(g.question):
         lows = [c for c in conditions if c.kind == "compare" and c.op in (">=", ">", "=")]
@@ -1066,15 +1115,23 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
         if c.kind == "compare" and c.op == "=":
             by_column.setdefault(g.schema.canonical(c.column), []).append(c)
     for conds in by_column.values():
-        if len(conds) == 2 and conds[0].values != conds[1].values and connector == "AND":
-            table = conds[0].column.split(".")[0]
-            if subject is None or table == subject:
-                # One row cannot hold two values: "from France and Germany" means either.
-                others = [c for c in conditions if c not in conds]
-                merged = Condition("in_values", conds[0].column, values=tuple(c.values[0] for c in conds))
-                conditions = others + [merged]
-            else:
-                both = (conditions.index(conds[0]), conditions.index(conds[1]))
+        if len(conds) != 2 or conds[0].values == conds[1].values:
+            continue
+        between = _text_between(g, conds[0].values[0], conds[1].values[0])
+        wants_both = (connector == "AND" if between is None else
+                      bool(re.search(r"\b(and|both)\b", between, re.I))
+                      and not re.search(r"\bor\b", between, re.I))
+        table = conds[0].column.split(".")[0]
+        if wants_both and table != subject:
+            both = (conditions.index(conds[0]), conditions.index(conds[1]))
+        elif wants_both and subject and not _identifies_rows(g.schema, subject, outputs):
+            # 'studios with films by both A and B': two different rows of the same table.
+            both = (conditions.index(conds[0]), conditions.index(conds[1]))
+        else:
+            # One row cannot hold two values: 'singers from France and Germany' means either.
+            others = [c for c in conditions if c not in conds]
+            merged = Condition("in_values", conds[0].column, values=tuple(c.values[0] for c in conds))
+            conditions = others + [merged]
     return conditions, connector, both
 
 

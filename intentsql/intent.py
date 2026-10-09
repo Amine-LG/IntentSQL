@@ -417,12 +417,15 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
         for i, part in enumerate(parts[1:], start=1):
             query = ir.SetOp(op, query, _select(schema, part, f"p{i}_", join_choices))
         return query
+    keyed = (any(o.is_aggregate for o in intent.outputs) or intent.order or intent.group_by
+             or intent.limit is not None)
     if intent.excluded:
         kept = intent.with_(excluded=())
         removed = intent.with_(excluded=(), conditions=intent.excluded, both=None, order=(),
                                limit=None, offset=None, distinct=False, group_by=())
-        if kept.order or kept.limit is not None:
-            raise PlanError("Ordering combined with an exclusion is not supported")
+        if keyed:
+            # Remove records by key, then aggregate/order what remains.
+            return _with_key_set(schema, kept, [(removed, "x_")], "EXCEPT", join_choices)
         return ir.SetOp("EXCEPT", build_query(schema, kept) if kept.both is None
                         else _select(schema, kept.with_(both=None), "", join_choices),
                         _select(schema, removed, "x_", join_choices))
@@ -433,12 +436,46 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
                             order=(), limit=None, distinct=False)
         right = intent.with_(conditions=tuple(shared + [intent.conditions[second]]), both=None,
                              order=(), limit=None, distinct=False)
+        if keyed:
+            main = intent.with_(conditions=tuple(shared), both=None)
+            return _with_key_set(schema, main, [(left, "a_"), (right, "b_")], "INTERSECT",
+                                 join_choices)
         return ir.SetOp("INTERSECT", _select(schema, left, "a_", join_choices),
                         _select(schema, right, "b_", join_choices))
     return _select(schema, intent, "", join_choices)
 
 
-def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str, str]) -> ir.Select:
+def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]], op: str,
+                  join_choices: dict[str, str]) -> ir.Query:
+    """``main`` restricted by a set operation over the subject's key:
+    INTERSECT: key IN (A INTERSECT B); EXCEPT: key NOT IN (removed)."""
+    subject = main.subject or (query_tables(main) or [None])[0]
+    if subject is None:
+        raise PlanError("No subject for a set operation")
+    pk = schema.table(subject).primary_key
+    if len(pk) != 1:
+        raise PlanError(f"{subject} has no single-column key to combine results by")
+    key = OutputItem(None, f"{schema.table(subject).name}.{pk[0]}")
+
+    def key_select(part: Intent, prefix: str) -> ir.Select:
+        return _select(schema, part.with_(outputs=(key,), order=(), limit=None, offset=None,
+                                          group_by=(), distinct=False, both=None, excluded=(),
+                                          subject=subject), prefix, join_choices)
+
+    if op == "EXCEPT":
+        subquery: ir.Query = key_select(*parts[0])
+        negated = True
+    else:
+        subquery = key_select(*parts[0])
+        for part, prefix in parts[1:]:
+            subquery = ir.SetOp(op, subquery, key_select(part, prefix))
+        negated = False
+    return _select(schema, main.with_(subject=subject), "", join_choices,
+                   extra_where=lambda scope: ir.InQuery(scope.col(key.column), subquery, negated))
+
+
+def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str, str],
+            extra_where: Any = None) -> ir.Select:
     tables = query_tables(intent)
     root = intent.subject if intent.subject in tables else (tables[0] if tables else intent.subject)
     if root is None:
@@ -461,6 +498,8 @@ def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str,
         where: ir.Cond | None = ir.Or(tuple(where_conds))
     else:
         where = ir.conjoin(where_conds)
+    if extra_where is not None:
+        where = ir.conjoin(([where] if where is not None else []) + [extra_where(scope)])
     having_conds = [ir.Compare(_count_expr(schema, scope, c.table, fanned), c.op, ir.Lit(c.values[0]))
                     if c.kind == "having" and not c.column and c.func == "COUNT" else
                     _condition(schema, scope, c, counter, join_choices)

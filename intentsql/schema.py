@@ -299,6 +299,18 @@ class Schema:
             current = nxt
         return current
 
+    def one_to_many(self, a: str, b: str) -> bool:
+        """True when following the shortest path from ``a`` to ``b`` can reach several
+        ``b`` rows for one ``a`` row (some step goes from a referenced table to a
+        table that references it)."""
+        if a == b:
+            return False
+        paths = self.shortest_paths(a, b, limit=1)
+        if not paths:
+            return False
+        return any(step.fk.table == step.table and step.fk.ref_table == step.from_table
+                   for step in paths[0])
+
     def parallel_edges(self, a: str, b: str) -> list[ForeignKey]:
         return [fk for fk in self.edges(a) if fk.other(a) == b]
 
@@ -423,7 +435,8 @@ def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:
             columns.append(Column(name, col_name, declared or "", kind, bool(pk_pos),
                                   bool(not_null), humanize(col_name), distinct, nulls or 0,
                                   _storage(sample)))
-            if kind in (TEXT, DATE, BOOLEAN, OTHER) and distinct and distinct <= VALUE_INDEX_LIMIT:
+            if (kind in (TEXT, DATE, BOOLEAN, OTHER) and distinct and distinct <= VALUE_INDEX_LIMIT) or (
+                    kind == NUMBER and distinct == 2):
                 values[f"{name}.{col_name}"] = tuple(
                     str(r[0]) for r in conn.execute(
                         f"SELECT DISTINCT {qcol} FROM {qname} WHERE {qcol} IS NOT NULL "
