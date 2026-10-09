@@ -182,7 +182,7 @@ class AskInput(BaseModel):
 def ask(body: AskInput) -> dict[str, Any]:
     entry = _entry(body.database)
     if not shared_client().configured:
-        raise HTTPException(400, "No Jev API key is configured. Open Connection settings.")
+        raise HTTPException(400, "No Jev API key is configured yet. Open Settings (the gear icon) to add one.")
     result = answer(entry.path, body.question)
     return _safe(result.to_dict(debug=True))
 
@@ -192,7 +192,7 @@ def ask_stream(body: AskInput) -> StreamingResponse:
     """The same answer as /api/ask, preceded by progress events (server-sent events)."""
     entry = _entry(body.database)
     if not shared_client().configured:
-        raise HTTPException(400, "No Jev API key is configured. Open Connection settings.")
+        raise HTTPException(400, "No Jev API key is configured yet. Open Settings (the gear icon) to add one.")
     events: queue.Queue[tuple[str, Any] | None] = queue.Queue()
 
     def run() -> None:

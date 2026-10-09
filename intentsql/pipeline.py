@@ -270,7 +270,9 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         if reading.error:
             failure = failure or reading.error
             continue
-        signature = (tuple(reading.columns), tuple(sorted(map(repr, reading.preview))))
+        # Same rows with the columns in another order are the same answer, not an alternative.
+        signature = (len(reading.columns),
+                     tuple(sorted(tuple(sorted(map(repr, row))) for row in reading.preview)))
         if signature in seen_results:
             continue                      # same result as an earlier reading: not a real alternative
         seen_results.append(signature)

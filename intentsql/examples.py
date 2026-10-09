@@ -11,7 +11,7 @@ import re
 
 from intentsql.intent import entity
 from intentsql.render import plural
-from intentsql.schema import NUMBER, TEXT, Column, Schema, flag_values
+from intentsql.schema import DATE, NUMBER, TEXT, Column, Schema, flag_values
 
 _NAME = re.compile(r"\b(name|title)\b")
 
@@ -79,5 +79,16 @@ def examples(schema: Schema, limit: int = 6) -> list[str]:
                   and 2 <= len(schema.values.get(c.key, ())) <= 20]
         if measures and groups:
             add(f"What is the average {measures[0].label} for each {groups[0].label}?")
+            break
+    for table in tables:
+        dates = [c for c in table.columns if c.kind == DATE]
+        if dates and len(out) < limit:
+            add(f"How many {plural(entity(schema, table.name))} were there in each year?")
+            break
+    for table in tables:
+        groups = [c for c in table.columns if c.kind == TEXT and not c.is_identifier
+                  and 2 <= len(schema.values.get(c.key, ())) <= 30]
+        if groups and len(out) < limit:
+            add(f"How many {plural(entity(schema, table.name))} are there for each {groups[0].label}?")
             break
     return out[:limit]

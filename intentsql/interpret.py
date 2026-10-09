@@ -1156,10 +1156,12 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         if answer.choice == "has":
             if answer.top_probability < strategy.related_threshold:
                 continue
-            record(f"rel_{key}", "relationship", f"{rel_subject} has {target}", answer, "has")
+            record(f"rel_{key}", "relationship",
+                   f"{entity(schema, rel_subject)} that has a {entity(schema, target)}", answer, "has")
             conditions.append(Condition("related", None, table=target))
         else:
-            record(f"rel_{key}", "relationship", f"{rel_subject} lacks {target}", answer, "lacks")
+            record(f"rel_{key}", "relationship",
+                   f"{entity(schema, rel_subject)} that has no {entity(schema, target)}", answer, "lacks")
             far = _far_side(schema, rel_subject, target)
             inner = [c for c in conditions if c.column and c.column.split(".")[0] in far
                      and c.column.split(".")[0] not in output_tables]
@@ -1194,8 +1196,10 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             and EACH_CUE.search(g.question)):
         limit_per = group_by[0]  # 'the two cheapest products in each category': rank within groups
         conditions = [c for c in conditions if not (c.kind == "vs_group" and c.op == "=")]
-    if not aggregated:
+    if not aggregated and group_by:
         group_by = []          # "the name of each program" lists rows; it does not group them
+        if limit_per is None:
+            record.decisions = [d for d in record.decisions if d.key != "group"]
     if group_by and any(c.kind == "compare" and c.op == "=" and c.column in schema.equivalents(group_by[0])
                         for c in conditions):
         group_by = []          # grouping by a column pinned to one value yields a single group
