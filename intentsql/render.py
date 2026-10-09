@@ -101,6 +101,9 @@ def condition(schema: Schema, cond: Condition, subject: str | None) -> str:
     label = _label(schema, cond.column, subject) if cond.column else "value"
     if kind in ("compare", "text"):
         return f"whose {label} {OPS[cond.op]} {_value(cond.values[0])}"
+    if kind == "columns":
+        word = {"=": "is the same as", "!=": "is different from"}.get(cond.op, OPS[cond.op])
+        return f"whose {label} {word} the {_label(schema, cond.values[0], subject)}"
     if kind == "between":
         return f"whose {label} is between {_value(cond.values[0])} and {_value(cond.values[1])}"
     if kind == "in_values":
@@ -113,7 +116,11 @@ def condition(schema: Schema, cond: Condition, subject: str | None) -> str:
         func = FUNC.get(cond.func or "AVG", "average")
         if cond.op == "=" and cond.func in ("MAX", "MIN"):
             return f"whose {label} is the {'highest' if cond.func == 'MAX' else 'lowest'} of all"
-        return f"whose {label} {word} the {func} {label} of all {plural(entity(schema, cond.column.split('.')[0]))}"
+        table = cond.column.split(".")[0]
+        if cond.inner:
+            inner = _join([condition(schema, c, table) for c in cond.inner])
+            return f"whose {label} {word} the {func} {label} of the {plural(entity(schema, table))} {inner}"
+        return f"whose {label} {word} the {func} {label} of all {plural(entity(schema, table))}"
     if kind == "having_vs":
         return (f"whose average {label} is {'above' if cond.op == '>' else 'below'} the average "
                 f"{label} of all {plural(entity(schema, cond.column.split('.')[0]))}")

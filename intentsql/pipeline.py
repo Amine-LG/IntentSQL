@@ -221,7 +221,7 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         flips += alternatives(grounding, cands, interpretation, strategy)
     failure = None
     for origin, intent in flips:
-        reading = _realize(schema, db_path, intent, origin)
+        reading = _realize(grounding.schema, db_path, intent, origin)
         if reading.error:
             failure = failure or reading.error
             continue

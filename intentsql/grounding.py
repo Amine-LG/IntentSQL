@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from intentsql.measures import derive
 from intentsql.schema import TEXT, Schema, quote_identifier
 from intentsql.text import NUMBER_WORDS, ORDINALS, STOPWORDS, Token, lemma, stem, tokenize
 
@@ -89,13 +90,15 @@ def _normalize(value: str) -> str:
     return " ".join(value.lower().split())
 
 
-_INDEXES: dict[int, ValueIndex] = {}
+_INDEXES: dict[int, tuple[dict[str, tuple[str, ...]], ValueIndex]] = {}
 
 
 def value_index(schema: Schema) -> ValueIndex:
-    cached = _INDEXES.get(id(schema))
-    if cached is not None:
-        return cached
+    # Keyed by the identity of the value map (shared by request-scoped schema copies);
+    # the map is kept alongside so a recycled id can never return another schema's index.
+    cached = _INDEXES.get(id(schema.values))
+    if cached is not None and cached[0] is schema.values:
+        return cached[1]
     exact: dict[str, list[tuple[str, str]]] = {}
     for key, values in schema.values.items():
         for value in values:
@@ -110,7 +113,7 @@ def value_index(schema: Schema) -> ValueIndex:
                        {k: tuple(v) for k, v in by_first.items()})
     if len(_INDEXES) > 64:
         _INDEXES.clear()
-    _INDEXES[id(schema)] = index
+    _INDEXES[id(schema.values)] = (schema.values, index)
     return index
 
 
@@ -237,6 +240,8 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
                     continue
                 if word.isdigit():
                     continue  # numbers are handled below, with value matches attached
+                if word.lower() in NUMBER_WORDS and not any(str(v) == word for _, v in matches):
+                    continue  # 'two or more regions' is a number, not the storm named 'Two'
             spans.append((j - i, start, end, surface, matches))
             break
     for _, start, end, surface, matches in sorted(spans, key=lambda s: (-s[0], s[1])):
@@ -373,7 +378,17 @@ def link_scores(question: str, schema: Schema) -> tuple[dict[str, float], dict[s
 
 def ground(question: str, schema: Schema) -> Grounding:
     columns, tables, mention = link_scores(question, schema)
-    literals = extract_literals(question, schema)
+    literals = extract_literals(question, schema)     # stored values: the shared base schema
+    measures = derive(question, schema, columns, mention)
+    if measures:
+        schema = schema.with_columns(measures)
+        for measure in measures:
+            assert measure.formula is not None
+            _, left, right = measure.formula
+            columns[measure.key] = 0.9
+            positions = [mention[k] for k in (left, right) if k in mention]
+            if positions:
+                mention[measure.key] = min(positions)
     for literal in literals:
         for key in literal.columns:
             columns[key] = max(columns.get(key, 0.0), 0.9)

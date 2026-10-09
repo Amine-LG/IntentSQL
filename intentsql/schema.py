@@ -44,6 +44,7 @@ class Column:
     null_count: int | None = None
     storage: str = "text"     # dominant SQLite storage class of stored values
     blank_count: int = 0      # empty strings, which people also call 'missing'
+    formula: tuple[str, str, str] | None = None   # derived measure: (operator, left key, right key)
 
     @property
     def key(self) -> str:
@@ -55,7 +56,7 @@ class Column:
 
     @property
     def is_identifier(self) -> bool:
-        return self.primary_key or bool(_IDENTIFIER.search(self.name))
+        return self.formula is None and (self.primary_key or bool(_IDENTIFIER.search(self.name)))
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,6 @@ class Schema:
     tables: dict[str, Table]
     foreign_keys: tuple[ForeignKey, ...]
     values: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
-    _use_soft: bool = field(default=False, repr=False)
 
     # ---- lookup -------------------------------------------------------------
     def table(self, name: str) -> Table:
@@ -132,14 +132,31 @@ class Schema:
         table, _, column = key.partition(".")
         return self.table(table).column(column)
 
+    def with_columns(self, extra: Iterable[Column]) -> Schema:
+        """A request-scoped copy with derived columns added (the cached schema is shared)."""
+        tables = dict(self.tables)
+        for column in extra:
+            table = tables[column.table]
+            tables[column.table] = Table(table.name, table.label, table.columns + (column,),
+                                         table.primary_key, table.row_count)
+        return Schema(self.path, tables, self.foreign_keys, self.values)
+
+    def requires(self, key: str) -> tuple[str, ...]:
+        """Tables a column needs in scope: its own, plus the operands' for a derived measure."""
+        column = self.column(key)
+        if column.formula is None:
+            return (column.table,)
+        _, left, right = column.formula
+        return tuple(dict.fromkeys((column.table,) + self.requires(left) + self.requires(right)))
+
     @cached_property
     def columns(self) -> tuple[Column, ...]:
         return tuple(c for t in self.tables.values() for c in t.columns)
 
-    def edges(self, table: str) -> list[ForeignKey]:
+    def edges(self, table: str, soft: bool = False) -> list[ForeignKey]:
         edges = [fk for fk in self.foreign_keys if table in (fk.table, fk.ref_table)
                  and fk.table != fk.ref_table]
-        if self._use_soft:
+        if soft:
             edges += [fk for fk in self.soft_edges if table in (fk.table, fk.ref_table)]
         return edges
 
@@ -184,7 +201,8 @@ class Schema:
         return not own
 
     # ---- join paths ---------------------------------------------------------
-    def shortest_paths(self, start: str, goal: str, limit: int = 4) -> list[list[JoinStep]]:
+    def shortest_paths(self, start: str, goal: str, limit: int = 4,
+                       soft: bool = False) -> list[list[JoinStep]]:
         """All shortest FK paths from ``start`` to ``goal`` (bounded)."""
         if start == goal:
             return [[]]
@@ -195,7 +213,7 @@ class Schema:
             node, path = queue.popleft()
             if best and len(path) >= len(best[0]):
                 continue
-            for fk in self.edges(node):
+            for fk in self.edges(node, soft):
                 nxt = fk.other(node)
                 if any(step.table == nxt for step in path) or nxt == start:
                     continue
@@ -221,14 +239,11 @@ class Schema:
         tables = list(tables)
         tree = self._join_tree(tables, root)
         if tree is None and self.soft_edges:
-            self._use_soft = True
-            try:
-                tree = self._join_tree(tables, root)
-            finally:
-                self._use_soft = False
+            tree = self._join_tree(tables, root, soft=True)
         return tree
 
-    def _join_tree(self, tables: Iterable[str], root: str | None = None) -> list[JoinStep] | None:
+    def _join_tree(self, tables: Iterable[str], root: str | None = None,
+                   soft: bool = False) -> list[JoinStep] | None:
         wanted = list(dict.fromkeys(tables))
         if not wanted:
             return []
@@ -241,7 +256,7 @@ class Schema:
             best_target = None
             for target in remaining:
                 for source in sorted(in_tree):
-                    for path in self.shortest_paths(source, target, limit=1):
+                    for path in self.shortest_paths(source, target, limit=1, soft=soft):
                         if best_path is None or len(path) < len(best_path):
                             best_path, best_target = path, target
             if best_path is None:
@@ -476,9 +491,16 @@ def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:
                         f"SELECT DISTINCT {qcol} FROM {qname} WHERE {qcol} IS NOT NULL "
                         f"LIMIT {VALUE_INDEX_LIMIT}"))
         tables[name] = Table(name, humanize(name), tuple(columns), pk, row_count)
+        # One FK per constraint id: a composite key (block_floor, block_code) is one
+        # relationship, joined on both columns, not two unrelated single-column links.
+        grouped: dict[int, list[tuple]] = {}
         for row in conn.execute(f"PRAGMA foreign_key_list({qname})").fetchall():
-            ref_table, from_col, to_col = row[2], row[3], row[4]
-            raw_fks.append(ForeignKey(name, (from_col,), ref_table, (to_col,)))
+            grouped.setdefault(row[0], []).append(row)
+        for rows in grouped.values():
+            rows.sort(key=lambda r: r[1])
+            ref_table = rows[0][2]
+            raw_fks.append(ForeignKey(name, tuple(r[3] for r in rows), ref_table,
+                                      tuple(r[4] for r in rows)))
     fks = _normalize_fks(tables, raw_fks)
     fks += _infer_foreign_keys(tables, fks)
     return Schema(path, tables, tuple(fks), values)
@@ -495,9 +517,10 @@ def _normalize_fks(tables: dict[str, Table], raw: list[ForeignKey]) -> list[Fore
             continue
         ref_table = tables[ref]
         ref_cols = []
-        for column, ref_col in zip(fk.columns, fk.ref_columns):
+        for position, (column, ref_col) in enumerate(zip(fk.columns, fk.ref_columns)):
             if ref_col is None:
-                ref_col = ref_table.primary_key[0] if len(ref_table.primary_key) == 1 else column
+                pk = ref_table.primary_key
+                ref_col = pk[position] if len(pk) == len(fk.columns) else column
             try:
                 ref_cols.append(ref_table.column(ref_col).name)
             except KeyError:

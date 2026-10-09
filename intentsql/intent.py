@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from intentsql import ir
-from intentsql.schema import Schema
+from intentsql.schema import DATE, Schema
 from intentsql.text import lemma
 
 TEXT_OPS = {"contains": "%{}%", "starts": "{}%", "ends": "%{}"}
@@ -63,8 +63,9 @@ class Condition:
     top_group    column op the most (func=DESC) / least (ASC) common value of that column
     vs_group     column op func(column) over the records sharing ``table`` (a column key):
                  'earning more than the average salary of their department' (correlated)
-    vs_aggregate column op func(agg_column) over all rows of its table
+    vs_aggregate column op func(column) over the rows of its table (those matching ``inner``)
     having       func(column or COUNT(*) of table) op values[0], per group
+    columns      column op values[0], where values[0] is another column key ('support < oppose')
     """
     kind: str
     column: str | None = None
@@ -81,6 +82,8 @@ class Condition:
             return ()
         if self.kind == "related":
             return ()      # realized as a semi-join (IN), so it never multiplies rows
+        if self.kind == "columns" and self.column:
+            return tuple(dict.fromkeys((self.column.split(".", 1)[0], self.values[0].split(".", 1)[0])))
         if self.column:
             return (self.column.split(".", 1)[0],)
         return (self.table,) if self.kind == "having" and self.table else ()
@@ -178,6 +181,8 @@ def describe_condition(schema: Schema, cond: Condition, subject: str | None = No
     phrase = column_phrase(schema, cond.column) if cond.column else "?"
     if cond.kind in ("compare", "text"):
         return f"{phrase} {OP_WORDS[cond.op]} {_value(cond.values[0])}"
+    if cond.kind == "columns":
+        return f"{phrase} {OP_WORDS[cond.op]} the {column_phrase(schema, cond.values[0])}"
     if cond.kind == "between":
         return f"{phrase} is between {_value(cond.values[0])} and {_value(cond.values[1])}"
     if cond.kind == "in_values":
@@ -273,9 +278,15 @@ class _Scope:
     def alias(self, table: str) -> str:
         return self.aliases[table]
 
-    def col(self, key: str) -> ir.Col:
-        table, _, column = key.partition(".")
-        return ir.Col(self.alias(self.schema.table(table).name), self.schema.column(key).name)
+    def col(self, key: str) -> ir.Expr:
+        column = self.schema.column(key)
+        if column.formula is not None:
+            op, left, right = column.formula
+            a, b = self.col(left), self.col(right)
+            if op == "-" and self.schema.column(left).kind == DATE:
+                a, b = ir.Func("JULIANDAY", (a,)), ir.Func("JULIANDAY", (b,))
+            return ir.BinOp(op, a, b)
+        return ir.Col(self.alias(self.schema.table(column.table).name), column.name)
 
 
 def _from(schema: Schema, tables: list[str], root: str, prefix: str,
@@ -312,6 +323,8 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
                join_choices: dict[str, str]) -> ir.Cond:
     if cond.kind == "compare":
         return ir.Compare(scope.col(cond.column), cond.op, ir.Lit(cond.values[0]))
+    if cond.kind == "columns":
+        return ir.Compare(scope.col(cond.column), cond.op, scope.col(cond.values[0]))
     if cond.kind == "text":
         if cond.op == "not_contains":
             return ir.Like(scope.col(cond.column), f"%{cond.values[0]}%", negated=True)
@@ -334,7 +347,7 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "vs_group":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
         group = cond.table or ""
         sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
                         from_=inner_from,
@@ -343,7 +356,7 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "top_group":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
         col = inner_scope.col(cond.column)
         sub = ir.Select(items=(ir.SelectItem(col),), from_=inner_from, group_by=(col,),
                         order_by=(ir.OrderItem(ir.Agg("COUNT", ir.Star()), cond.func != "ASC"),),
@@ -352,7 +365,7 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "having_vs":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
         sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
                         from_=inner_from)
         return ir.Compare(ir.Agg(cond.func or "AVG", scope.col(cond.column)), cond.op, ir.ScalarQuery(sub))
@@ -360,16 +373,19 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
         prefix = f"q{counter[0]}_"
-        inner_from, inner_scope = _from(schema, [table], table, prefix, join_choices)
+        tables = list(schema.requires(cond.column)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
+        inner_from, inner_scope = _from(schema, tables, table, prefix, join_choices)
+        where = ir.conjoin([_condition(schema, inner_scope, c, counter, join_choices)
+                            for c in cond.inner])
         sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
-                        from_=inner_from)
+                        from_=inner_from, where=where)
         return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
     if cond.kind in ("absent", "related"):
         return _membership(schema, scope, cond, counter, join_choices, negated=cond.kind == "absent")
     if cond.kind == "same_as":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
-        tables = [table] + [c.column.split(".", 1)[0] for c in cond.inner if c.column]
+        tables = list(schema.requires(cond.column)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
         inner_from, inner_scope = _from(schema, tables, table, f"q{counter[0]}_", join_choices)
         where = ir.conjoin([_condition(schema, inner_scope, c, counter, join_choices)
                             for c in cond.inner])
@@ -430,18 +446,34 @@ def _count_expr(schema: Schema, scope: _Scope, table: str | None, fanned: set[st
     return ir.Agg("COUNT", ir.Star())
 
 
-def query_tables(intent: Intent) -> list[str]:
+def query_tables(intent: Intent, schema: Schema | None = None) -> list[str]:
+    """Tables the main query joins; with a schema, also the operand tables of derived measures."""
     tables: list[str] = []
+
+    def add(key: str | None, fallback: tuple[str, ...] = ()) -> None:
+        if key and schema is not None:
+            tables.extend(schema.requires(key))
+        elif key:
+            tables.append(key.split(".", 1)[0])
+        tables.extend(fallback)
+
     for item in intent.outputs:
-        tables.extend(item.tables)
+        add(item.column, () if item.column else item.tables)
     for cond in intent.conditions:
-        tables.extend(cond.tables)
+        if not cond.tables:
+            continue
+        if cond.column:
+            add(cond.column)
+            if cond.kind == "columns":
+                add(cond.values[0])
+        else:
+            tables.extend(cond.tables)
     for key in intent.group_by:
-        tables.append(key.split(".", 1)[0])
+        add(key)
     tables.extend(intent.via)
     for order in intent.order:
         if order.column:
-            tables.append(order.column.split(".", 1)[0])
+            add(order.column)
         elif order.table:
             tables.append(order.table)
     return list(dict.fromkeys(tables))
@@ -552,7 +584,7 @@ def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]],
 
 def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str, str],
             extra_where: Any = None) -> ir.Select:
-    tables = query_tables(intent)
+    tables = query_tables(intent, schema)
     root = intent.subject if intent.subject in tables else (tables[0] if tables else intent.subject)
     if root is None:
         raise PlanError("No source table")

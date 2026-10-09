@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from intentsql.grounding import Grounding, Literal
-from intentsql.intent import Condition, Intent, Ordering, OutputItem, column_phrase, entity
+from intentsql.intent import Condition, Intent, Ordering, OutputItem, _negate, column_phrase, entity
 from intentsql.jev import Answer, Question, choice, noul
 from intentsql.schema import BOOLEAN, DATE, NUMBER, TEXT, Column, Schema
 from intentsql.text import ORDINALS
@@ -45,16 +45,16 @@ AGG_FUNCS = (("AVG", "average"), ("SUM", "total"), ("MAX", "maximum"), ("MIN", "
 EXPLICIT_AGG = {
     "AVG": re.compile(r"\b(average|mean|avg)\b", re.I),
     "SUM": re.compile(r"\b(total|sum)\b", re.I),
-    "MAX": re.compile(r"\b(max|maximum)\b", re.I),
-    "MIN": re.compile(r"\b(min|minimum)\b", re.I),
+    "MAX": re.compile(r"\b(max|maximum|maxium|maximal)\b", re.I),
+    "MIN": re.compile(r"\b(min|min[iu]mum|mininum|minimal)\b", re.I),
 }
 COUNT_CUE = re.compile(r"\b(number of|how many|count of|count the)\b", re.I)
 STAR_CUE = re.compile(r"\b(all (the )?(information|info|details|data|attributes|columns|fields)|"
                       r"everything|every (detail|attribute|column))\b", re.I)
 AGG_WORDS = {
     "AVG": EXPLICIT_AGG["AVG"], "SUM": EXPLICIT_AGG["SUM"],
-    "MAX": re.compile(r"\b(max|maximum|highest|largest|biggest|greatest)\b", re.I),
-    "MIN": re.compile(r"\b(min|minimum|lowest|smallest|least)\b", re.I),
+    "MAX": re.compile(r"\b(max|maximum|maxium|maximal|highest|largest|biggest|greatest|longest)\b", re.I),
+    "MIN": re.compile(r"\b(min|min[iu]mum|mininum|minimal|lowest|smallest|least|shortest)\b", re.I),
 }
 COUNT_KINDS_CUE = re.compile(r"\bhow many (kinds|types|sorts|varieties)\b|\bnumber of (kinds|types)\b", re.I)
 CONTAINS_CUE = re.compile(r"\b(contain\w*|includ\w*|with the (word|letter|text|string)|start\w* with|"
@@ -62,13 +62,19 @@ CONTAINS_CUE = re.compile(r"\b(contain\w*|includ\w*|with the (word|letter|text|s
 DISTINCT_CUE = re.compile(r"\b(distinct|different|unique|differ\w*|various)\b", re.I)
 NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neither|nor|other than|"
                           r"lacks?|apart from|besides)\b|n't\b", re.I)
-AGG_COMPARE_CUE = re.compile(r"\b(average|mean|than (any|all|every|each|the (maximum|minimum|largest|"
-                             r"smallest|highest|lowest|max|min))|than (that|those) of)\b", re.I)
+AGG_COMPARE_CUE = re.compile(r"\b(average|mean|(than|above|below|over|under|exceed\w*|beyond) (any|all|every|"
+                             r"each|the (maximum|minimum|largest|smallest|highest|lowest|max|min))|"
+                             r"than (that|those) of)\b", re.I)
+# 'older than every engineer', 'above any wine from 2006': the literal describes the
+# records the aggregate is computed over, not the results.
+QUANTIFIED_CUE = re.compile(r"\b(than|above|below|over|under|exceed\w*|beyond) (any|all|every|each)\b", re.I)
+ALWAYS_CUE = re.compile(r"\b(always|every time|only ever|at all times|consistently)\b", re.I)
+BOTH_CUE = re.compile(r"\bboth\b|\bnot only\b.+\bbut also\b|\bas well as\b|\band also\b", re.I)
 THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b|"
                       r"\b(order|sort)\w* by \w+(?: \w+){0,4} and\b", re.I)
 EXCEPT_CUE = re.compile(r"\b(except|excluding|never|without|other than|apart from|besides|"
-                        r"(?:do|does|did|have|has)(?:n't| not) (?:have|own|make|contain|include|got)|"
-                        r"(?:don't|doesn't|didn't) have)\b", re.I)
+                        r"(?:do|does|did|have|has|had)(?:n't| not) (?:ever )?\w+|"
+                        r"(?:don't|doesn't|didn't|haven't|hasn't|hadn't) \w+)\b", re.I)
 TOP_GROUP_CUE = re.compile(r"\b(most|least)\s+(common|popular|frequent|usual)\b", re.I)
 NULL_CUE = re.compile(r"\b(without|missing|unknown|empty|null|blank|lacks?|lacking|not (?:set|given|"
                       r"recorded|specified|available|assigned|provided|known|listed)|(?:do|does|did)(?: not|n't) "
@@ -78,6 +84,8 @@ OWN_GROUP_CUE = re.compile(r"\b(their|its|his|her|own|same|respective|within|tha
 PER_GROUP_SUPERLATIVE = re.compile(r"\b(\w+est|most \w+|least \w+|highest|lowest|top)\b.*\b(in|of|for|within) "
                                    r"(each|every|its|their)\b|\b(each|every|per)\b.*\b(\w+est|highest|lowest)\b",
                                    re.I)
+COLUMN_COMPARE_CUE = re.compile(r"\b(than|same|equal\w*|identical|match\w*|differ\w*|exceed\w*|"
+                                r"as (?:high|low|much|many|large|big|long) as)\b", re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
 MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
@@ -129,6 +137,7 @@ class Candidates:
     nulls: list[Option] = field(default_factory=list)              # missing / present values
     stars: list[Option] = field(default_factory=list)              # "all information about X"
     multi_count: list[Option] = field(default_factory=list)        # several counts requested
+    col_compares: list[Option] = field(default_factory=list)       # one column against another
 
 
 @dataclass
@@ -281,8 +290,8 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     cue_funcs = [f for f, cue in AGG_WORDS.items() if cue.search(g.question)]
     if len(cue_funcs) >= 2 and any(cue.search(g.question) for cue in EXPLICIT_AGG.values()) or len(
             [f for f, cue in EXPLICIT_AGG.items() if cue.search(g.question)]) >= 2 or (
-            re.search(r"\b(highest|largest|maximum|max)\b.*\b(lowest|smallest|minimum|min)\b|"
-                      r"\b(lowest|smallest|minimum|min)\b.*\b(highest|largest|maximum|max)\b",
+            re.search(r"\b(highest|largest|maximum|maxium|maximal|max|longest)\b.*\b(lowest|smallest|min[iu]mum|mininum|minimal|min|shortest)\b|"
+                      r"\b(lowest|smallest|min[iu]mum|mininum|minimal|min|shortest)\b.*\b(highest|largest|maximum|maxium|maximal|max|longest)\b",
                       g.question, re.I)):
         for column in columns:
             if column.is_numeric and not column.is_identifier:
@@ -392,6 +401,8 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                        column.key))
 
     _order_candidates(g, cands, columns)
+    if COLUMN_COMPARE_CUE.search(g.question):
+        cands.col_compares = _column_comparisons(g, columns)
 
     cands.limits.append(Option("all", "no: return every result (or the single computed value)", None))
     cands.limits.append(Option("one", "only the single top-ranked item (e.g. 'the highest', 'the most', 'the first')", 1))
@@ -415,6 +426,31 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                        fk.key))
                 cands.joins["|".join(sorted((a, b)))] = opts
     return cands
+
+
+def _column_comparisons(g: Grounding, columns: list[Column]) -> list[Option]:
+    """'candidates with a lower support rate than oppose rate', 'reviewers with the same
+    name as the director': two attributes the request names, compared with each other."""
+    schema = g.schema
+    linked = [c for c in columns if g.column_link.get(c.key, 0) >= 0.5 and not c.is_identifier
+              and c.formula is None]
+    options: list[Option] = []
+    for i, a in enumerate(linked):
+        for b in linked[i + 1:]:
+            numeric = a.kind in (NUMBER, DATE) and b.kind == a.kind
+            text = a.kind == TEXT and b.kind == TEXT
+            if not (numeric or text) or a.key in schema.equivalents(b.key):
+                continue
+            paths = schema.shortest_paths(a.table, b.table, limit=1) if a.table != b.table else [[]]
+            if not paths or len(paths[0]) > 2:
+                continue
+            pa, pb = column_phrase(schema, a.key), column_phrase(schema, b.key)
+            ops = ((("<", "less than"), (">", "greater than"), ("=", "equal to")) if numeric
+                   else (("=", "the same as"), ("!=", "different from")))
+            for op, word in ops:
+                options.append(Option(f"x{len(options)}", f"the {pa} is {word} the {pb}",
+                                      Condition("columns", a.key, op, (b.key,))))
+    return options[:60]
 
 
 def _flag_values(values: tuple[str, ...]) -> tuple[str, str] | None:
@@ -483,6 +519,11 @@ def literal_context(question: str, lit: Literal, before: int = 4, after: int = 3
     return " ".join(left + [f"[{question[lit.start:lit.end]}]"] + right)
 
 
+SUBSET_ROLE = Option("subset", "it describes the other records that results are compared "
+                                "against, not the results (e.g. 'more expensive than any wine from "
+                                "2006', 'older than every engineer')", "subset")
+
+
 def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[str]) -> LiteralSlots:
     schema = g.schema
     rep_of = {m: rep for rep in classes for m in schema.equivalents(rep)}
@@ -517,6 +558,8 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
             roles.append(Option("reference", "it identifies one particular record, and results must "
                                              "share an attribute with that record (e.g. 'in the same "
                                              "department as Clara')", "reference"))
+        if QUANTIFIED_CUE.search(g.question):
+            roles.append(SUBSET_ROLE)
         roles.append(Option("other", "not a filter value (e.g. part of a table or column name, "
                                      "or a word used in another sense)", None))
         if lit.kind == "date":
@@ -537,6 +580,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
                  Option("group_total", "a threshold on a total or average computed per group "
                                        "(e.g. 'whose total sales exceed 1000')", "group_total"),
                  Option("limit", "how many results to return (e.g. 'top 5', 'the 3 largest')", "limit"),
+                 *([SUBSET_ROLE] if QUANTIFIED_CUE.search(g.question) else []),
                  Option("other", "none of these (e.g. part of a name, an identifier inside text, "
                                  "or a column name such as '200 meters')", None)]
         ops = NUMERIC_OPS
@@ -667,6 +711,11 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
                                                "that results must resemble, which attribute must "
                                                "they share with it?"},
                 {o.key: o.text for o in cands.shares})
+        if ALWAYS_CUE.search(g.question):
+            q[f"lall_{lit_id}"] = noul(
+                {"value": context,
+                 "question": "Does `request` require that every record of each result matches the "
+                             "bracketed part of `value` (e.g. 'whose temperature was always below 70')?"})
         if negation:
             q[f"lexc_{lit_id}"] = noul(
                 {"value": context,
@@ -720,6 +769,11 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
             "Does `request` restrict results to records where some attribute is missing (empty, "
             "unknown, not recorded) or present? If so, which?",
             {**{o.key: o.text for o in cands.nulls}, "none": "no such restriction"})
+    if cands.col_compares:
+        q["colcmp"] = choice(
+            "Does `request` compare two attributes of each result with each other (not with a "
+            "fixed value)? If so, which comparison?",
+            {**{o.key: o.text for o in cands.col_compares}, "none": "no such comparison"})
     q["connector"] = choice(
         "If `request` states several conditions, must every result satisfy all of them, or "
         "is satisfying any one of them enough?",
@@ -845,6 +899,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     # -- literal-bound conditions
     conditions: list[Condition] = []
     excluded: list[Condition] = []
+    subset: list[Condition] = []         # conditions on the records an aggregate is computed over
     limit: int | None = None
     for lit_id, slots in cands.literals.items():
         lit = slots.literal
@@ -894,6 +949,9 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             condition = Condition(kind, key, op, (value,))
         else:
             condition = Condition("compare", key, _numeric_op(op), (value,))
+        if role == "subset":
+            subset.append(condition)
+            continue
         if role == "reference" and f"lshr_{lit_id}" in answers:
             shared = _pick(cands.shares, answers[f"lshr_{lit_id}"]).payload
             record(f"lshr_{lit_id}", "shared attribute", f"shared with {slots.context}",
@@ -901,9 +959,16 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             if shared not in schema.equivalents(key):
                 conditions.append(Condition("same_as", shared, inner=(condition,)))
                 continue
-        if exclude and condition.op not in ("!=", "not_contains"):
+        always = (answers[f"lall_{lit_id}"].p or 0) >= 0.6 if f"lall_{lit_id}" in answers else False
+        negative = condition.op in ("!=", "not_contains")
+        if always and not negative and not _identifies_rows(schema, key.split(".")[0], outputs):
+            # 'zip codes whose dew point was always below 70': no record may violate it.
+            record(f"lall_{lit_id}", "universal condition", f"always {slots.context}",
+                   answers[f"lall_{lit_id}"], True)
+            excluded.append(_negate(condition))
+        elif exclude and not negative:
             excluded.append(condition)
-        elif exclude and EXCEPT_CUE.search(g.question) and not _identifies_rows(
+        elif (exclude or negative) and EXCEPT_CUE.search(g.question) and not _identifies_rows(
                 schema, key.split(".")[0], outputs):
             # 'publishers which do not have a book in 1989': a publisher qualifies when none
             # of its rows matches -- a set difference, not a row filter.
@@ -926,6 +991,11 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         record("nulls", "missing values", option.text, answers["nulls"], option.text)
         conditions.append(option.payload)
 
+    if "colcmp" in answers and answers["colcmp"].choice != "none":
+        option = _pick(cands.col_compares, answers["colcmp"])
+        record("colcmp", "column comparison", option.text, answers["colcmp"], option.text)
+        conditions.append(option.payload)
+
     # -- comparison with an aggregate
     top_group: Condition | None = None
     if "vsagg" in answers and answers["vsagg"].choice != "none":
@@ -933,8 +1003,12 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         record("vsagg", "aggregate comparison", option.text, answers["vsagg"], option.text)
         if option.payload.kind == "top_group":
             top_group = option.payload      # kept unless a count ranking already expresses it
+        elif option.payload.kind == "vs_aggregate" and subset:
+            conditions.append(replace(option.payload, inner=tuple(subset)))
+            subset = []
         else:
             conditions.append(option.payload)
+    conditions.extend(subset)               # no aggregate to attach them to: plain conditions
 
     # -- grouping, ordering, limit, distinct, connector, relationship roles
     group_by: list[str] = []
@@ -1350,7 +1424,7 @@ def _shape_outputs(g: Grounding, outputs: list[OutputItem], order: tuple[Orderin
             continue
         others = [o for o in deduped if o not in items]
         needed = _referenced_tables(others, conditions)
-        named = [i for i in items if g.table_link.get(i.column.split(".")[0], 0) > 0]
+        named = [i for i in items if g.table_link.get(i.column.split(".")[0], 0) >= 1.0]
         if len(named) >= 2:
             continue
         keep = [i for i in items if i.column.split(".")[0] in needed][:1] or named[:1] or items[:1]
@@ -1425,7 +1499,11 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
                       bool(re.search(r"\b(and|both|as well as)\b", between, re.I))
                       and not re.search(r"\bor\b", between, re.I))
         table = conds[0].column.split(".")[0]
-        if wants_both and table != subject:
+        if wants_both and BOTH_CUE.search(g.question):
+            # 'customers with both saving and checking accounts': no single row holds two
+            # values, so the two values come from different rows of the same result.
+            both = (conditions.index(conds[0]), conditions.index(conds[1]))
+        elif wants_both and table != subject:
             both = (conditions.index(conds[0]), conditions.index(conds[1]))
         elif wants_both and subject and not _identifies_rows(g.schema, subject, outputs):
             # 'studios with films by both A and B': two different rows of the same table.
@@ -1435,7 +1513,23 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
             others = [c for c in conditions if c not in conds]
             merged = Condition("in_values", conds[0].column, values=tuple(c.values[0] for c in conds))
             conditions = others + [merged]
+    if both is None and connector == "AND":
+        both = _disjoint_ranges(g.schema, conditions)
     return conditions, connector, both
+
+
+def _disjoint_ranges(schema: Schema, conditions: list[Condition]) -> tuple[int, int] | None:
+    """'types with products priced above 4500 and products priced below 3000': two ranges
+    of one column that no single row can satisfy together describe different rows."""
+    ranges = [(i, c) for i, c in enumerate(conditions) if c.kind == "compare"
+              and c.op in (">", ">=", "<", "<=") and isinstance(c.values[0], (int, float))]
+    for i, low in ranges:
+        for j, high in ranges:
+            if (low.op in (">", ">=") and high.op in ("<", "<=")
+                    and schema.canonical(low.column) == schema.canonical(high.column)
+                    and low.values[0] >= high.values[0]):
+                return (min(i, j), max(i, j))
+    return None
 
 
 def _ordinal_offset(question: str) -> int | None:
