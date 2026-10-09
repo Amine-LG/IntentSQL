@@ -286,7 +286,7 @@ async function ask() {
 
 // ---------------------------------------------------------------- answer
 const CONFIDENCE = {
-  answered: (c) => (c === null || c === undefined || c >= 0.6 ? ["ok", "Confident"] : ["warn", "Likely"]),
+  answered: (c) => (c === null || c === undefined || c >= 0.8 ? ["ok", "Confident"] : ["warn", "Likely right"]),
   ambiguous: () => ["bad", "Uncertain"],
   refused: () => ["bad", "Not answered"],
   error: () => ["bad", "Error"],
@@ -308,7 +308,7 @@ function showAnswer(result) {
   const pill = $("#confidence");
   pill.className = `pill ${tone}`; pill.textContent = label;
   pill.title = result.confidence !== null && result.confidence !== undefined
-    ? `Verification score ${Math.round(result.confidence * 100)}%` : "";
+    ? `In testing, about ${Math.round(result.confidence * 100)}% of answers with this level of confidence were correct` : "";
   renderReading();
   renderAlternatives();
   const notice = $("#notice");
@@ -437,7 +437,7 @@ function renderHow() {
   const items = [["Total time", t.total !== undefined ? `${t.total} ms` : "—"],
     ["Jev", u.calls ? `${plural(u.calls, "call")} · ${(u.input_tokens || 0).toLocaleString()} input tokens` : "—"]];
   if (result.confidence !== null && result.confidence !== undefined) {
-    items.push(["Check", `${Math.round(result.confidence * 100)}% that the reading matches the question`]);
+    items.push(["Confidence", `about ${Math.round(result.confidence * 100)}% of answers like this were correct in testing`]);
   }
   const dl = el("dl", { class: "steps" });
   for (const [k, v] of items) dl.append(el("dt", { text: k }), el("dd", { text: v }));

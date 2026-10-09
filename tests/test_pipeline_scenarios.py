@@ -194,8 +194,15 @@ class ScenarioTest(unittest.TestCase):
         jev = ScriptedJev([("^out_", "customer name in", SHOW), ("^verify", "", 0.05)])
         result = answer(self.db, "What are the customer names?", client=jev)
         self.assertEqual(result.status, AMBIGUOUS)
-        self.assertLess(result.confidence, 0.2)
+        self.assertLess(result.verification, 0.2)
+        self.assertLess(result.confidence, 0.5)                # calibrated: more likely wrong than right
         self.assertEqual(len(result.rows), 5)          # the best reading is still shown
+
+    def test_calibration_is_monotone_and_penalizes_alternatives(self):
+        from intentsql.pipeline import calibrated
+        scores = [calibrated(p / 20, 0) for p in range(21)]
+        self.assertEqual(scores, sorted(scores))
+        self.assertLess(calibrated(0.8, 2), calibrated(0.8, 0))
 
     def test_clearly_better_alternative_replaces_the_main_reading(self):
         class Narrow(ScriptedJev):
