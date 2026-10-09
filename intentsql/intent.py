@@ -467,13 +467,17 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
     if intent.limit_per and intent.order and intent.limit:
         return _ranked(schema, intent, join_choices)
     having = [c for c in intent.conditions if c.kind == "having"]
-    counted = list(dict.fromkeys(c.table for c in having if c.table and not c.column))
-    if len(counted) >= 2 and not intent.order and (intent.group_by or _effective_groups(intent, schema)):
-        # Counts over different related tables cannot share one join (rows would
-        # multiply): evaluate each separately and combine the groups.
+
+    def source(c: Condition) -> str:
+        return c.col.split(".", 1)[0] if c.column else c.table or ""
+
+    sources = list(dict.fromkeys(source(c) for c in having))
+    if len(sources) >= 2 and not intent.order and (intent.group_by or _effective_groups(intent, schema)):
+        # Aggregates over different related tables cannot share one join (each table's
+        # rows would multiply the other's): evaluate each separately, combine the groups.
         rest = [c for c in intent.conditions if c.kind != "having"]
-        parts = [intent.with_(conditions=tuple(rest + [c for c in having if c.table == t]))
-                 for t in counted]
+        parts = [intent.with_(conditions=tuple(rest + [c for c in having if source(c) == t]))
+                 for t in sources]
         op = "UNION" if intent.connector == "OR" else "INTERSECT"
         query: ir.Query = _select(schema, parts[0], "p0_", join_choices)
         for i, part in enumerate(parts[1:], start=1):

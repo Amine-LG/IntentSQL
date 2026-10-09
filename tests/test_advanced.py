@@ -91,6 +91,21 @@ class AdvancedTest(unittest.TestCase):
         self.assertIn("How many orders does each customer have?", found)
         self.assertIn("Which customers have no orders?", found)
 
+    def test_aggregates_over_two_related_tables_do_not_multiply(self):
+        # Ann: 2 orders and 6 items; joining orders and items in one query would count 3
+        # "orders" for Ann and double other customers' quantities.
+        result = self.ask("Which customers placed more than 1 order and ordered a total quantity above 5?", [
+            ("^out_", "show the customer name in", "itself"),
+            ("^role_", r"\[1\]", "how many related records"),
+            ("^lcnt_", r"\[1\]", "how many order records"),
+            ("^lop_", r"\[1\]", "^greater than"),
+            ("^role_", r"\[5\]", "total or average computed per group"),
+            ("^lcol_", r"\[5\]", "order item quantity"),
+            ("^lfun_", r"\[5\]", "total"),
+            ("^lop_", r"\[5\]", "^greater than")])
+        self.assertEqual(rows(result), [("Ann",)])
+        self.assertIn("INTERSECT", result.sql)
+
     def test_period_parsing(self):
         today = date(2026, 10, 9)
         found = {text: value[:2] for _, _, text, value in periods(
