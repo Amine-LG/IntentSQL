@@ -42,3 +42,47 @@ All experiments use the Spider **train** split (development data), 300-case stra
 |---|---:|---:|---:|
 | Seed 31 | 71.0 → **73.0** | 89.7% | 78.1% |
 | Seed 21 | 74.7 → 74.7 | 88.0% | 81.8% |
+
+**E10, which verification question separates right from wrong readings best?** These were scored on the labelled interpretations from E7 (train, seed 31; `experiments/verify_prompts.py`).
+
+| Variant | AUC | Accuracy at 90 / 80 / 70% coverage |
+|---|---:|---|
+| v0 "describes exactly what the request asks, nothing missing, nothing extra" | **0.772** | 76.4 / 79.4 / 82.7 |
+| v1 "would answering it give the person what they asked for" | 0.734 | 75.7 / 79.4 / 79.3 |
+| v2 two Nouls, "missing" × "extra" | 0.751 | 75.7 / 79.0 / 81.7 |
+| v3 4-level Score rubric | 0.769 | 75.3 / 79.8 / 82.7 |
+
+Rerun on 2026-10-10 with the same labelled set. v0 was kept: it is as good as the rubric, with one Noul and no rubric to maintain.
+
+**E11, how the reading is phrased for verification.** The first renderer wrote "Return the X of Y where …". Jev read it literally and scored correct readings at about 0.15. A natural phrasing ("List the name of each region that has no stores", "Count the orders whose status is 'cancelled'") raised correct readings to about 0.9 while wrong readings stayed low. It is used both for verification and as the explanation users see (`render.py`).
+
+## v2 iteration (2026-10-09 to 10)
+
+Runs use train seeds 31 and 21 (300 cases each) unless noted. Per-seed noise is about ±1 point.
+
+| # | Change | Seeds 31 / 21 | Other evidence | Decision |
+|---|---|---|---|---|
+| E12 | Quantified conditions (never / always / both), subset aggregates, derived measures, column comparisons, composite FKs | 73.7/77.3 → 74.3/76.3 | 3 targeted cases fixed, no systematic loss | Kept: new capabilities at no cost |
+| E13 | Self-reference role tables, possessive tokenization | 74.7/77.0 | adversarial 89.2 → 93.8% | Kept |
+| E14 | Role tables for *parallel* references too (source/destination airport as separate tables) | not run | — | Not adopted: the first parallel reference would have to stay a plain join, which makes the base table silently mean one role. The per-request relationship choice is kept; `INTENTSQL_PARALLEL_ROLES=1` enables the experiment |
+| E15 | Filters through one-to-many relationships as membership tests (no repeated rows) | 74.0/77.0 → 75.0/76.7 | features: f-join-2 fixed | Kept: correct semantics, neutral on Spider |
+| E16 | Aggregate comparisons only with a comparative word ("average order value" no longer gets 250 comparison options) | within noise | about −10k prompt characters on such requests | Kept |
+| E17 | Calibration: verification score − 0.2 × result-distinct alternatives | AUC 0.742 → 0.765 (1,200 predictions) | accuracy-at-coverage improves at every threshold | Kept, mapped to observed accuracy (isotonic, train only) |
+| E18 | Row identity from data statistics only in tables of ≥ 20 rows | 75.7/75.7 | fixes "editors per age" counting another table | Kept |
+| E19 | Group labels show the identified record's name (supplier name for "per supplier"), even if this adds a join | neutral across v2e–v2i | fixes a bug that showed a product name | Kept: better answers, no measurable cost |
+
+### Signals that predict a wrong answer (AUC, train, 1,200 predictions)
+
+| Signal | AUC |
+|---|---:|
+| Verification probability | 0.742 |
+| Minimum decision probability | 0.628 |
+| Number of result-distinct alternatives (fewer = better) | 0.609 |
+| Empty result | 0.500 (uninformative) |
+| Verification − 0.2 × alternatives | **0.765** |
+
+Accuracy by number of distinct alternatives:
+- 0 alternatives: 80.5% (n = 966);
+- 1 alternative: 58.2% (n = 194);
+- 2 alternatives: 48.1% (n = 27);
+- 3 alternatives: 27.3% (n = 11).
