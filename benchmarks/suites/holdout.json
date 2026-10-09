@@ -1,0 +1,548 @@
+{
+ "suite": "holdout",
+ "frozen": "2026-10-10",
+ "description": "Held-out hand-written suite on a schema unseen during development.",
+ "cases": [
+  {
+   "id": "h-01",
+   "database": "clinic.sqlite",
+   "question": "List all departments and the floor they are on.",
+   "gold_sql": [
+    "SELECT DeptName, Floor FROM Department"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "projection",
+   "group": null
+  },
+  {
+   "id": "h-02",
+   "database": "clinic.sqlite",
+   "question": "Which doctors earn more than 400000?",
+   "gold_sql": [
+    "SELECT FullName FROM Doctor WHERE Salary > 400000"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "comparison",
+   "group": null
+  },
+  {
+   "id": "h-03",
+   "database": "clinic.sqlite",
+   "question": "Which medications have 'ine' at the end of their name?",
+   "gold_sql": [
+    "SELECT MedName FROM Medication WHERE MedName LIKE '%ine'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "text_match",
+   "group": null
+  },
+  {
+   "id": "h-04",
+   "database": "clinic.sqlite",
+   "question": "How many patients have no insurance provider on file?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM Patient WHERE InsuranceProvider IS NULL"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nulls",
+   "group": null
+  },
+  {
+   "id": "h-05",
+   "database": "clinic.sqlite",
+   "question": "How many patients live in Quincy or Medford?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM Patient WHERE City IN ('Quincy', 'Medford')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "in_list",
+   "group": null
+  },
+  {
+   "id": "h-06",
+   "database": "clinic.sqlite",
+   "question": "What different medication categories are there?",
+   "gold_sql": [
+    "SELECT DISTINCT Category FROM Medication"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "distinct",
+   "group": null
+  },
+  {
+   "id": "h-07",
+   "database": "clinic.sqlite",
+   "question": "Show the five most expensive medications per unit, most expensive first.",
+   "gold_sql": [
+    "SELECT MedName FROM Medication ORDER BY UnitCost DESC LIMIT 5",
+    "SELECT MedName, UnitCost FROM Medication ORDER BY UnitCost DESC LIMIT 5"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "ordering",
+   "group": null
+  },
+  {
+   "id": "h-08",
+   "database": "clinic.sqlite",
+   "question": "How many appointments had a fee between 100 and 200?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM Appointment WHERE Fee BETWEEN 100 AND 200"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "between",
+   "group": null
+  },
+  {
+   "id": "h-09",
+   "database": "clinic.sqlite",
+   "question": "Which doctors work in Cardiology?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID WHERE T2.DeptName = 'Cardiology'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "join",
+   "group": null
+  },
+  {
+   "id": "h-10",
+   "database": "clinic.sqlite",
+   "question": "Which patients were prescribed Tamoxifen? Give their last names.",
+   "gold_sql": [
+    "SELECT DISTINCT T1.LastName FROM Patient T1 JOIN Appointment T2 ON T1.PatientID = T2.PatientID JOIN Prescription T3 ON T2.ApptID = T3.ApptID JOIN Medication T4 ON T3.MedID = T4.MedID WHERE T4.MedName = 'Tamoxifen'",
+    "SELECT T1.LastName FROM Patient T1 WHERE T1.PatientID IN (SELECT T2.PatientID FROM Appointment T2 JOIN Prescription T3 ON T2.ApptID = T3.ApptID JOIN Medication T4 ON T3.MedID = T4.MedID WHERE T4.MedName = 'Tamoxifen')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "multi_join",
+   "group": null
+  },
+  {
+   "id": "h-11",
+   "database": "clinic.sqlite",
+   "question": "List each doctor with the name of their supervisor.",
+   "gold_sql": [
+    "SELECT T1.FullName, T2.FullName FROM Doctor T1 JOIN Doctor T2 ON T1.SupervisorID = T2.DoctorID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "self_join",
+   "group": null
+  },
+  {
+   "id": "h-12",
+   "database": "clinic.sqlite",
+   "question": "Which doctors earn more than their supervisor?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 JOIN Doctor T2 ON T1.SupervisorID = T2.DoctorID WHERE T1.Salary > T2.Salary"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "self_join",
+   "group": null
+  },
+  {
+   "id": "h-13",
+   "database": "clinic.sqlite",
+   "question": "How many appointments has each doctor had, including doctors with none?",
+   "gold_sql": [
+    "SELECT T1.FullName, COUNT(T2.ApptID) FROM Doctor T1 LEFT JOIN Appointment T2 ON T1.DoctorID = T2.DoctorID GROUP BY T1.DoctorID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "outer_join",
+   "group": null
+  },
+  {
+   "id": "h-14",
+   "database": "clinic.sqlite",
+   "question": "What is the average appointment fee for each status?",
+   "gold_sql": [
+    "SELECT Status, AVG(Fee) FROM Appointment GROUP BY Status"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "aggregate",
+   "group": null
+  },
+  {
+   "id": "h-15",
+   "database": "clinic.sqlite",
+   "question": "Which cities have more than 18 patients?",
+   "gold_sql": [
+    "SELECT City FROM Patient GROUP BY City HAVING COUNT(*) > 18"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "having",
+   "group": null
+  },
+  {
+   "id": "h-16",
+   "database": "clinic.sqlite",
+   "question": "How many different patients saw a doctor in 2024?",
+   "gold_sql": [
+    "SELECT COUNT(DISTINCT PatientID) FROM Appointment WHERE ApptDate LIKE '2024%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "count_distinct",
+   "group": null
+  },
+  {
+   "id": "h-17",
+   "database": "clinic.sqlite",
+   "question": "What is the total salary of the doctors in each department?",
+   "gold_sql": [
+    "SELECT T2.DeptName, SUM(T1.Salary) FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID GROUP BY T2.DeptID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "group_join",
+   "group": null
+  },
+  {
+   "id": "h-18",
+   "database": "clinic.sqlite",
+   "question": "Which department has the most doctors?",
+   "gold_sql": [
+    "SELECT T2.DeptName FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID GROUP BY T2.DeptID ORDER BY COUNT(*) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "superlative",
+   "group": null
+  },
+  {
+   "id": "h-19",
+   "database": "clinic.sqlite",
+   "question": "What is the average number of appointments per patient?",
+   "gold_sql": [
+    "SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM Patient) FROM Appointment",
+    "SELECT AVG(n) FROM (SELECT COUNT(*) AS n FROM Appointment GROUP BY PatientID)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nested_aggregate",
+   "group": null
+  },
+  {
+   "id": "h-20",
+   "database": "clinic.sqlite",
+   "question": "What percentage of appointments were no-shows?",
+   "gold_sql": [
+    "SELECT 100.0 * SUM(Status = 'no-show') / COUNT(*) FROM Appointment"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "percentage",
+   "group": null
+  },
+  {
+   "id": "h-21",
+   "database": "clinic.sqlite",
+   "question": "What was the total medication cost of each prescription line? Show the medication name.",
+   "gold_sql": [
+    "SELECT M.MedName, P.Quantity * M.UnitCost FROM Prescription P JOIN Medication M ON P.MedID = M.MedID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "h-22",
+   "database": "clinic.sqlite",
+   "question": "Which medication category has the highest total prescribed cost?",
+   "gold_sql": [
+    "SELECT M.Category FROM Prescription P JOIN Medication M ON P.MedID = M.MedID GROUP BY M.Category ORDER BY SUM(P.Quantity * M.UnitCost) DESC LIMIT 1",
+    "SELECT M.Category, SUM(P.Quantity * M.UnitCost) FROM Prescription P JOIN Medication M ON P.MedID = M.MedID GROUP BY M.Category ORDER BY SUM(P.Quantity * M.UnitCost) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "h-23",
+   "database": "clinic.sqlite",
+   "question": "Which doctors were hired before their supervisor?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 JOIN Doctor T2 ON T1.SupervisorID = T2.DoctorID WHERE T1.HiredOn < T2.HiredOn"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "column_compare",
+   "group": null
+  },
+  {
+   "id": "h-24",
+   "database": "clinic.sqlite",
+   "question": "Which patients have never had an appointment?",
+   "gold_sql": [
+    "SELECT FirstName, LastName FROM Patient WHERE PatientID NOT IN (SELECT PatientID FROM Appointment)",
+    "SELECT LastName FROM Patient WHERE PatientID NOT IN (SELECT PatientID FROM Appointment)",
+    "SELECT PatientID FROM Patient WHERE PatientID NOT IN (SELECT PatientID FROM Appointment)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "not_exists",
+   "group": null
+  },
+  {
+   "id": "h-25",
+   "database": "clinic.sqlite",
+   "question": "Which doctors have never had a cancelled appointment?",
+   "gold_sql": [
+    "SELECT FullName FROM Doctor WHERE DoctorID NOT IN (SELECT DoctorID FROM Appointment WHERE Status = 'cancelled')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "not_exists",
+   "group": null
+  },
+  {
+   "id": "h-26",
+   "database": "clinic.sqlite",
+   "question": "Which medications cost more per unit than the average medication?",
+   "gold_sql": [
+    "SELECT MedName FROM Medication WHERE UnitCost > (SELECT AVG(UnitCost) FROM Medication)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "scalar_subquery",
+   "group": null
+  },
+  {
+   "id": "h-27",
+   "database": "clinic.sqlite",
+   "question": "Which doctors earn more than the average salary in their department?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 WHERE T1.Salary > (SELECT AVG(T2.Salary) FROM Doctor T2 WHERE T2.DeptID = T1.DeptID)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "correlated",
+   "group": null
+  },
+  {
+   "id": "h-28",
+   "database": "clinic.sqlite",
+   "question": "Which cities have patients insured by both Aetna and Cigna?",
+   "gold_sql": [
+    "SELECT City FROM Patient WHERE InsuranceProvider = 'Aetna' INTERSECT SELECT City FROM Patient WHERE InsuranceProvider = 'Cigna'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "set_operation",
+   "group": null
+  },
+  {
+   "id": "h-29",
+   "database": "clinic.sqlite",
+   "question": "Who is the highest paid doctor in each department?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 WHERE T1.Salary = (SELECT MAX(T2.Salary) FROM Doctor T2 WHERE T2.DeptID = T1.DeptID)",
+    "SELECT T2.DeptName, T1.FullName FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID WHERE T1.Salary = (SELECT MAX(T3.Salary) FROM Doctor T3 WHERE T3.DeptID = T1.DeptID)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "top_per_group",
+   "group": null
+  },
+  {
+   "id": "h-30",
+   "database": "clinic.sqlite",
+   "question": "Which medication categories only contain medications costing under 1 per unit?",
+   "gold_sql": [
+    "SELECT DISTINCT Category FROM Medication EXCEPT SELECT Category FROM Medication WHERE UnitCost >= 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "universal",
+   "group": null
+  },
+  {
+   "id": "h-31",
+   "database": "clinic.sqlite",
+   "question": "Which appointments had a lower fee than every cancelled appointment? Give their ids.",
+   "gold_sql": [
+    "SELECT ApptID FROM Appointment WHERE Fee < (SELECT MIN(Fee) FROM Appointment WHERE Status = 'cancelled')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "vs_subset",
+   "group": null
+  },
+  {
+   "id": "h-32",
+   "database": "clinic.sqlite",
+   "question": "How many appointments were there in each month of 2024?",
+   "gold_sql": [
+    "SELECT STRFTIME('%Y-%m', ApptDate), COUNT(*) FROM Appointment WHERE ApptDate LIKE '2024%' GROUP BY 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_part",
+   "group": null
+  },
+  {
+   "id": "h-33",
+   "database": "clinic.sqlite",
+   "question": "How many appointments took place in the second quarter of 2023?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM Appointment WHERE ApptDate >= '2023-04-01' AND ApptDate < '2023-07-01'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_range",
+   "group": null
+  },
+  {
+   "id": "h-34",
+   "database": "clinic.sqlite",
+   "question": "Which doctors were hired before 2010?",
+   "gold_sql": [
+    "SELECT FullName FROM Doctor WHERE HiredOn < '2010-01-01'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_year",
+   "group": null
+  },
+  {
+   "id": "h-35",
+   "database": "clinic.sqlite",
+   "question": "How many completed appointments were there in March 2024?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM Appointment WHERE Status = 'completed' AND ApptDate LIKE '2024-03%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_month",
+   "group": null
+  },
+  {
+   "id": "h-36",
+   "database": "clinic.sqlite",
+   "question": "What is the average fee of a completed appointment?",
+   "gold_sql": [
+    "SELECT AVG(Fee) FROM Appointment WHERE Status = 'completed'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "h-37",
+   "database": "clinic.sqlite",
+   "question": "Which doctor saw the most different patients?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 JOIN Appointment T2 ON T1.DoctorID = T2.DoctorID GROUP BY T1.DoctorID ORDER BY COUNT(DISTINCT T2.PatientID) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "h-38",
+   "database": "clinic.sqlite",
+   "question": "Which doctor had the most appointments?",
+   "gold_sql": [
+    "SELECT T1.FullName FROM Doctor T1 JOIN Appointment T2 ON T1.DoctorID = T2.DoctorID GROUP BY T1.DoctorID ORDER BY COUNT(*) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "h-39",
+   "database": "clinic.sqlite",
+   "question": "How much did each patient pay in fees in total? Show last names.",
+   "gold_sql": [
+    "SELECT T1.LastName, SUM(T2.Fee) FROM Patient T1 JOIN Appointment T2 ON T1.PatientID = T2.PatientID GROUP BY T1.PatientID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "h-40",
+   "database": "clinic.sqlite",
+   "question": "How many doctors does each department have?",
+   "gold_sql": [
+    "SELECT T2.DeptName, COUNT(*) FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID GROUP BY T2.DeptID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "HP-1"
+  },
+  {
+   "id": "h-41",
+   "database": "clinic.sqlite",
+   "question": "Count the physicians in every department.",
+   "gold_sql": [
+    "SELECT T2.DeptName, COUNT(*) FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID GROUP BY T2.DeptID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "HP-1"
+  },
+  {
+   "id": "h-42",
+   "database": "clinic.sqlite",
+   "question": "Number of doctors per department",
+   "gold_sql": [
+    "SELECT T2.DeptName, COUNT(*) FROM Doctor T1 JOIN Department T2 ON T1.DeptID = T2.DeptID GROUP BY T2.DeptID"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "HP-1"
+  },
+  {
+   "id": "h-43",
+   "database": "clinic.sqlite",
+   "question": "Cancel all appointments scheduled for next week.",
+   "gold_sql": [],
+   "ordered": false,
+   "expect": "refuse",
+   "category": "unsupported",
+   "group": null
+  },
+  {
+   "id": "h-44",
+   "database": "clinic.sqlite",
+   "question": "Which patients will get sick next year?",
+   "gold_sql": [],
+   "ordered": false,
+   "expect": "refuse",
+   "category": "unsupported",
+   "group": null
+  },
+  {
+   "id": "h-45",
+   "database": "clinic.sqlite",
+   "question": "What is the capital of France?",
+   "gold_sql": [],
+   "ordered": false,
+   "expect": "refuse",
+   "category": "unsupported",
+   "group": null
+  }
+ ]
+}

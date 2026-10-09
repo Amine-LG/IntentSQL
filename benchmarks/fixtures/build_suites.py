@@ -11,13 +11,15 @@ sys.path.insert(0, str(HERE))
 
 import adversarial_cases  # noqa: E402
 import feature_cases  # noqa: E402
-from build_retail import build  # noqa: E402
+import holdout_cases  # noqa: E402
+from build_clinic import build as build_clinic  # noqa: E402
+from build_retail import build as build_retail  # noqa: E402
 
 
 def main() -> None:
-    db = build()
-    conn = sqlite3.connect(db)
-    for module in (adversarial_cases, feature_cases):
+    retail, clinic = build_retail(), build_clinic()
+    for module, db in ((adversarial_cases, retail), (feature_cases, retail), (holdout_cases, clinic)):
+        conn = sqlite3.connect(db)
         data = module.suite()
         for case in data["cases"]:
             results = [conn.execute(sql).fetchall() for sql in case["gold_sql"]]
