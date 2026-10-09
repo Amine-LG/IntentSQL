@@ -161,7 +161,7 @@ def _condition(schema: Schema, cond: Condition, subject: str | None) -> str:
         func = FUNC.get(cond.func or "AVG", "average")
         if cond.op == "=" and cond.func in ("MAX", "MIN"):
             return f"whose {label} is the {'highest' if cond.func == 'MAX' else 'lowest'} of all"
-        table = cond.column.split(".")[0]
+        table = cond.col.split(".")[0]
         if cond.inner:
             inner = _join([condition(schema, c, table) for c in cond.inner])
             return f"whose {label} {word} the {func} {label} of the {plural(entity(schema, table))} {inner}"
@@ -172,9 +172,9 @@ def _condition(schema: Schema, cond: Condition, subject: str | None) -> str:
                 f"than the average {subject_name}")
     if kind == "having_vs":
         return (f"whose average {label} is {'above' if cond.op == '>' else 'below'} the average "
-                f"{label} of all {plural(entity(schema, cond.column.split('.')[0]))}")
+                f"{label} of all {plural(entity(schema, cond.col.split('.')[0]))}")
     if kind == "vs_group":
-        group = _group_label(schema, cond.table or "", cond.column.split(".")[0])
+        group = _group_label(schema, cond.table or "", cond.col.split(".")[0])
         if cond.op == "=" and cond.func in ("MAX", "MIN"):
             return f"whose {label} is the {'highest' if cond.func == 'MAX' else 'lowest'} within their {group}"
         return (f"whose {label} is {'above' if cond.op == '>' else 'below'} the average {label} "

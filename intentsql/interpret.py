@@ -453,7 +453,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         for b in tables[i + 1:]:
             edges = schema.parallel_edges(a, b)
             if len(edges) >= 2:
-                opts = []
+                opts: list[Option] = []
                 for fk in edges:
                     child = entity(schema, fk.table)
                     via = " and ".join(schema.table(fk.table).column(c).label for c in fk.columns)
@@ -983,7 +983,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         if "main_output" not in answers:
             return Interpretation(None, record.decisions, record.uncertain,
                                   followup=missing_output_question(cands))
-        key = answers["main_output"].choice
+        key = answers["main_output"].picked
         record("main_output", "output", "main output", answers["main_output"], key)
         if key.endswith(":value"):
             group = next(o for o in cands.outputs if o.key == key.split(":")[0])
@@ -1006,7 +1006,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                {o.key: o.text for o in slots.roles})
         if role is None:
             continue
-        op = answers[f"lop_{lit_id}"].choice
+        op = answers[f"lop_{lit_id}"].picked
         if role == "limit":
             if isinstance(lit.value, int):
                 limit = lit.value
@@ -1036,7 +1036,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             record(f"lcol_{lit_id}", "literal column", f"column for {slots.context}", column_answer,
                    key, {o.key: o.text for o in slots.columns})
         if role == "group_total":
-            func = answers[f"lfun_{lit_id}"].choice
+            func = answers[f"lfun_{lit_id}"].picked
             conditions.append(Condition("having", key, _numeric_op(op), (value,), func=func))
             continue
         record(f"lop_{lit_id}", "literal operator", f"operator for {slots.context}",
@@ -1389,7 +1389,7 @@ def _dedupe_absent(schema: Schema, conditions: list[Condition], answers: dict[st
     if len(absent) < 2:
         return conditions
     keep = max(absent, key=lambda c: (bool(c.inner), -len(_far_side(schema, next(
-        (s for _, s, t in cands.relations if t == c.table), c.table), c.table))))
+        (s for _, s, t in cands.relations if t == c.table), c.table or ""), c.table or ""))))
     merged_inner = tuple(dict.fromkeys(i for c in absent for i in c.inner))
     keep = Condition("absent", None, table=keep.table, inner=merged_inner)
     return [c for c in conditions if c.kind != "absent"] + [keep]
@@ -1431,7 +1431,7 @@ def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, An
     counts_subject = any(o.table == subject and o.func == "COUNT" and o.column is None
                          for o in order) or any(c.kind == "having" and c.table == subject
                                                 and not c.column for c in conditions) or any(
-        o.table == subject and o.func == "COUNT" and o.column is None for o in outputs)
+        o.table == subject and o.func == "COUNT" and o.column is None for o in outputs or [])
     if counts_subject and _groups_are_singletons(schema, subject, group_keys):
         target = related_choice()
     outputs = list(outputs or [])
@@ -1473,7 +1473,7 @@ def _percentage(g: Grounding, outputs: list[OutputItem], conditions: list[Condit
     record(key, "percentage", "share of records", answer, answer.choice, {**options, "none": "none"})
     if answer.choice == "none":
         return outputs, conditions
-    chosen = candidates[int(answer.choice[1:])]
+    chosen = candidates[int(answer.picked[1:])]
     table = counts[0].table if counts else chosen.column.split(".")[0] if chosen.column else subject
     share = OutputItem("PCT", None, table, where=(chosen,))
     rest = [o for o in outputs if o not in counts]
@@ -1492,10 +1492,10 @@ def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list
         return outputs
     key = "conflict_count_sum"
     if key not in answers:
-        phrase = column_phrase(schema, total.column)
+        phrase = column_phrase(schema, total.column or "")
         followup[key] = choice(
             "Which does `request` ask for?",
-            {"count": f"how many {entity(schema, count.table)} records there are",
+            {"count": f"how many {entity(schema, count.table or '')} records there are",
              "sum": f"the total {phrase} (adding up the stored values)",
              "both": "both of these, as two separate values"})
         return outputs
@@ -1516,7 +1516,7 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
     from intentsql.intent import query_tables
     schema = g.schema
     tables = query_tables(intent)
-    related = {c.table for c in intent.conditions if c.kind == "related"}
+    related = {c.table for c in intent.conditions if c.kind == "related" and c.table}
     via: list[str] = list(intent.via)
     subject = intent.subject
     for target in related:
@@ -1555,8 +1555,8 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
                     options)
                 continue
             answer = answers[key]
-            route = routes_list[int(answer.choice[1:])]
-            record(key, "join route", options[answer.choice], answer, route)
+            route = routes_list[int(answer.picked[1:])]
+            record(key, "join route", options[answer.picked], answer, route)
             via.extend(route)
     if tuple(via) == intent.via:
         return intent
@@ -1661,10 +1661,10 @@ def _shape_outputs(g: Grounding, outputs: list[OutputItem], order: tuple[Orderin
             continue
         others = [o for o in deduped if o not in items]
         needed = _referenced_tables(others, conditions)
-        named = [i for i in items if g.table_link.get(i.column.split(".")[0], 0) >= 1.0]
+        named = [i for i in items if g.table_link.get((i.column or "").split(".")[0], 0) >= 1.0]
         if len(named) >= 2:
             continue
-        keep = [i for i in items if i.column.split(".")[0] in needed][:1] or named[:1] or items[:1]
+        keep = [i for i in items if (i.column or "").split(".")[0] in needed][:1] or named[:1] or items[:1]
         deduped = [o for o in deduped if o not in items or o in keep]
     return deduped
 
@@ -1701,7 +1701,7 @@ def _identifies_rows(schema: Schema, table: str, outputs: list[OutputItem]) -> b
 
 
 def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: str,
-                          subject: str | None, outputs: list[OutputItem] = ()
+                          subject: str | None, outputs: list[OutputItem] | None = None
                           ) -> tuple[list[Condition], str, tuple[int, int] | None]:
     """Deterministic clean-ups that need no semantic judgment."""
     if RANGE_CUE.search(g.question):
@@ -1725,7 +1725,7 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
     by_column: dict[str, list[Condition]] = {}
     for c in conditions:
         if c.kind == "compare" and c.op == "=":
-            by_column.setdefault(g.schema.canonical(c.column), []).append(c)
+            by_column.setdefault(g.schema.canonical(c.col), []).append(c)
     for conds in by_column.values():
         if len(conds) != 2 or conds[0].values == conds[1].values:
             continue
@@ -1733,14 +1733,14 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
         wants_both = (connector == "AND" if between is None else
                       bool(re.search(r"\b(and|both|as well as)\b", between, re.I))
                       and not re.search(r"\bor\b", between, re.I))
-        table = conds[0].column.split(".")[0]
+        table = conds[0].col.split(".")[0]
         if wants_both and BOTH_CUE.search(g.question):
             # 'customers with both saving and checking accounts': no single row holds two
             # values, so the two values come from different rows of the same result.
             both = (conditions.index(conds[0]), conditions.index(conds[1]))
         elif wants_both and table != subject:
             both = (conditions.index(conds[0]), conditions.index(conds[1]))
-        elif wants_both and subject and not _identifies_rows(g.schema, subject, outputs):
+        elif wants_both and subject and not _identifies_rows(g.schema, subject, outputs or []):
             # 'studios with films by both A and B': two different rows of the same table.
             both = (conditions.index(conds[0]), conditions.index(conds[1]))
         else:
@@ -1775,7 +1775,7 @@ def _disjoint_ranges(schema: Schema, conditions: list[Condition]) -> tuple[int, 
     for i, low in ranges:
         for j, high in ranges:
             if (low.op in (">", ">=") and high.op in ("<", "<=")
-                    and schema.canonical(low.column) == schema.canonical(high.column)
+                    and schema.canonical(low.col) == schema.canonical(high.col)
                     and low.values[0] >= high.values[0]):
                 return (min(i, j), max(i, j))
     return None

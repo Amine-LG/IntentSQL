@@ -107,17 +107,17 @@ def derive(question: str, schema: Schema, column_link: dict[str, float],
 
     columns: list[Column] = []
     seen: set[tuple[str, str, str]] = set()
-    for op, left, right, label in proposals:
-        if (op, left, right) in seen or len(columns) >= MAX_MEASURES:
+    for op, left_key, right_key, label in proposals:
+        if (op, left_key, right_key) in seen or len(columns) >= MAX_MEASURES:
             continue
-        seen.add((op, left, right))
-        host = _host(schema, left, right)
+        seen.add((op, left_key, right_key))
+        host = _host(schema, left_key, right_key)
         if op in PART_KINDS:
             columns.append(Column(host, f"__m{len(columns) + 1}", "", PART_KINDS[op], False, False,
-                                  label, PART_COUNTS[op], None, "text", 0, (op, left, right)))
+                                  label, PART_COUNTS[op], None, "text", 0, (op, left_key, right_key)))
             continue
         columns.append(Column(host, f"__m{len(columns) + 1}", "", NUMBER, False, False, label,
-                              None, None, "real", 0, (op, left, right)))
+                              None, None, "real", 0, (op, left_key, right_key)))
     return columns
 
 

@@ -4,7 +4,7 @@ An ``Intent`` is what the user asked for, expressed with grounded schema
 objects but without SQL mechanics: which values to return, which conditions
 hold, how results are grouped, ranked and limited.  ``build_query`` derives
 the SQL structure (join tree, subqueries, set operations, GROUP BY) from it.
-``describe`` renders it as plain English for the UI and for Jev comparisons.
+``render.describe`` renders it as plain English for the UI and for Jev comparisons.
 """
 
 from __future__ import annotations
@@ -19,9 +19,6 @@ from intentsql.schema import DATE, Schema
 from intentsql.text import lemma
 
 TEXT_OPS = {"contains": "%{}%", "starts": "{}%", "ends": "%{}"}
-OP_WORDS = {"=": "is", "!=": "is not", ">": "is greater than", "<": "is less than",
-            ">=": "is at least", "<=": "is at most", "contains": "contains",
-            "starts": "starts with", "ends": "ends with", "not_contains": "does not contain"}
 # Filters through one-to-many relationships are membership tests (no repeated rows).
 SEMI_JOIN_FILTERS = os.environ.get("INTENTSQL_SEMI_JOIN", "1") != "0"
 DATE_PARTS = {"year": "%Y", "month": "%Y-%m", "day": "%Y-%m-%d", "weekday": "%w", "hour": "%H"}
@@ -86,6 +83,13 @@ class Condition:
     func: str | None = None
     table: str | None = None
     inner: tuple[Condition, ...] = ()
+
+    @property
+    def col(self) -> str:
+        """The column of a kind that always has one (compare, between, vs_* ...)."""
+        if self.column is None:
+            raise PlanError(f"A {self.kind} condition needs a column")
+        return self.column
 
     @property
     def tables(self) -> tuple[str, ...]:
@@ -159,100 +163,6 @@ def column_phrase(schema: Schema, key: str) -> str:
     # Keeping the entity on every phrase measurably helps Jev tell tables apart
     # (dropping it cost ~2 points on Spider train), even when slightly redundant.
     return f"{name} {column.label}"
-
-
-def describe_output(schema: Schema, item: OutputItem) -> str:
-    if item.star:
-        return f"all attributes of the {entity(schema, item.table)} records"
-    if item.column is None:
-        return f"the number of {entity(schema, item.table)} records"
-    phrase = column_phrase(schema, item.column)
-    if item.func is None:
-        return f"the {phrase}"
-    if item.func == "COUNT":
-        return f"the number of {'distinct ' if item.distinct else ''}{phrase} values"
-    return f"the {FUNC_WORDS[item.func]} {phrase}"
-
-
-def _value(v: Any) -> str:
-    return f"'{v}'" if isinstance(v, str) else str(v)
-
-
-def describe_condition(schema: Schema, cond: Condition, subject: str | None = None) -> str:
-    if cond.kind == "related":
-        return f"has related {entity(schema, cond.table)} records"
-    if cond.kind == "same_as":
-        inner = " and ".join(describe_condition(schema, c) for c in cond.inner)
-        return f"{column_phrase(schema, cond.column)} is the same as for the records where {inner}"
-    if cond.kind == "absent":
-        inner = " and ".join(describe_condition(schema, c) for c in cond.inner)
-        what = entity(schema, cond.table)
-        base = f"has no related {what} records"
-        return base + (f" where {inner}" if inner else "")
-    if cond.kind == "having":
-        target = (f"the number of {entity(schema, cond.table)} records" if not cond.column
-                  else f"the {FUNC_WORDS[cond.func or 'COUNT']} {column_phrase(schema, cond.column)}")
-        return f"{target} per group {OP_WORDS[cond.op]} {_value(cond.values[0])}"
-    phrase = column_phrase(schema, cond.column) if cond.column else "?"
-    if cond.kind in ("compare", "text"):
-        return f"{phrase} {OP_WORDS[cond.op]} {_value(cond.values[0])}"
-    if cond.kind == "columns":
-        return f"{phrase} {OP_WORDS[cond.op]} the {column_phrase(schema, cond.values[0])}"
-    if cond.kind == "period":
-        return f"{phrase} is in {cond.values[2]}"
-    if cond.kind == "between":
-        return f"{phrase} is between {_value(cond.values[0])} and {_value(cond.values[1])}"
-    if cond.kind == "in_values":
-        values = ", ".join(_value(v) for v in cond.values)
-        return f"{phrase} is {'not ' if cond.negated else ''}one of {values}"
-    if cond.kind == "null":
-        return f"{phrase} is {'present' if cond.negated else 'missing (null)'}"
-    if cond.kind == "vs_group":
-        return (f"{phrase} {OP_WORDS[cond.op]} the {FUNC_WORDS[cond.func or 'AVG']} {phrase} of "
-                f"records with the same {column_phrase(schema, cond.table)}")
-    if cond.kind == "top_group":
-        word = "most" if cond.func != "ASC" else "least"
-        return f"{phrase} {'is' if cond.op == '=' else 'is not'} the {word} common {phrase}"
-    if cond.kind == "having_vs":
-        word = FUNC_WORDS[cond.func or 'AVG']
-        return (f"the {word} {phrase} per group {OP_WORDS[cond.op]} the {word} {phrase} "
-                f"of all {schema.table(cond.column.split('.')[0]).label} records")
-    if cond.kind == "vs_aggregate":
-        return (f"{phrase} {OP_WORDS[cond.op]} the {FUNC_WORDS[cond.func or 'AVG']} "
-                f"{column_phrase(schema, cond.column)} of all {schema.table(cond.column.split('.')[0]).label} records")
-    return f"{cond.kind} {phrase}"
-
-
-def describe(schema: Schema, intent: Intent) -> str:
-    outputs = ", ".join(describe_output(schema, o) for o in intent.outputs)
-    text = f"Return {'distinct values of ' if intent.distinct else ''}{outputs}"
-    group = _effective_groups(intent, schema)
-    if group:
-        text += " for each " + " and ".join(column_phrase(schema, g) for g in group)
-    where = [c for c in intent.conditions if c.kind not in ("having", "having_vs")]
-    if intent.excluded:
-        text += ", excluding those where " + " and ".join(
-            describe_condition(schema, c) for c in intent.excluded)
-    if where:
-        joiner = " and " if intent.connector == "AND" else " or "
-        text += " where " + joiner.join(describe_condition(schema, c) for c in where)
-    having = [c for c in intent.conditions if c.kind in ("having", "having_vs")]
-    if having:
-        text += ", keeping only groups where " + " and ".join(
-            describe_condition(schema, c) for c in having)
-    if intent.order:
-        parts = []
-        for o in intent.order:
-            target = (describe_output(schema, OutputItem(o.func, o.column, o.table))
-                      if o.is_aggregate else f"the {column_phrase(schema, o.column)}")
-            parts.append(f"{target} {'from highest to lowest' if o.desc else 'from lowest to highest'}")
-        text += ", sorted by " + ", then ".join(parts)
-    if intent.limit is not None:
-        text += (", only the first result" if intent.limit == 1
-                 else f", only the first {intent.limit} results")
-    if intent.offset:
-        text += f" after skipping {intent.offset}"
-    return text + "."
 
 
 # ---- building IR ------------------------------------------------------------------
@@ -342,62 +252,62 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
         return ir.And(parts) if cond.kind == "all" else ir.Or(parts)
     if cond.kind == "compare":
         value = cond.values[0]
-        if schema.column(cond.column).kind == DATE and _is_year(value):
+        if schema.column(cond.col).kind == DATE and _is_year(value):
             # 'orders placed in 2024' / 'after 2020': compare the year of a date.
-            return ir.Compare(ir.Func("STRFTIME", (ir.Lit("%Y"), scope.col(cond.column))), cond.op,
+            return ir.Compare(ir.Func("STRFTIME", (ir.Lit("%Y"), scope.col(cond.col))), cond.op,
                               ir.Lit(str(int(value))))
-        if schema.column(cond.column).kind == DATE and isinstance(value, str) and _MONTH.match(value):
-            return ir.Compare(ir.Func("STRFTIME", (ir.Lit("%Y-%m"), scope.col(cond.column))), cond.op,
+        if schema.column(cond.col).kind == DATE and isinstance(value, str) and _MONTH.match(value):
+            return ir.Compare(ir.Func("STRFTIME", (ir.Lit("%Y-%m"), scope.col(cond.col))), cond.op,
                               ir.Lit(value))
-        return ir.Compare(scope.col(cond.column), cond.op, ir.Lit(value))
+        return ir.Compare(scope.col(cond.col), cond.op, ir.Lit(value))
     if cond.kind == "columns":
-        return ir.Compare(scope.col(cond.column), cond.op, scope.col(cond.values[0]))
+        return ir.Compare(scope.col(cond.col), cond.op, scope.col(cond.values[0]))
     if cond.kind == "text":
         if cond.op == "not_contains":
-            return ir.Like(scope.col(cond.column), f"%{cond.values[0]}%", negated=True)
-        return ir.Like(scope.col(cond.column), TEXT_OPS[cond.op].format(cond.values[0]))
+            return ir.Like(scope.col(cond.col), f"%{cond.values[0]}%", negated=True)
+        return ir.Like(scope.col(cond.col), TEXT_OPS[cond.op].format(cond.values[0]))
     if cond.kind == "period":
-        column = scope.col(cond.column)
+        column = scope.col(cond.col)
         return ir.And((ir.Compare(column, ">=", ir.Lit(cond.values[0])),
                        ir.Compare(column, "<", ir.Lit(cond.values[1]))))
     if cond.kind == "between":
         low, high = cond.values
-        if schema.column(cond.column).kind == DATE and _is_year(low) and _is_year(high):
-            return ir.Between(ir.Func("STRFTIME", (ir.Lit("%Y"), scope.col(cond.column))),
+        if schema.column(cond.col).kind == DATE and _is_year(low) and _is_year(high):
+            return ir.Between(ir.Func("STRFTIME", (ir.Lit("%Y"), scope.col(cond.col))),
                               ir.Lit(str(low)), ir.Lit(str(high)))
-        return ir.Between(scope.col(cond.column), ir.Lit(low), ir.Lit(high))
+        return ir.Between(scope.col(cond.col), ir.Lit(low), ir.Lit(high))
     if cond.kind == "in_values":
-        return ir.InList(scope.col(cond.column), tuple(ir.Lit(v) for v in cond.values), cond.negated)
+        return ir.InList(scope.col(cond.col), tuple(ir.Lit(v) for v in cond.values), cond.negated)
     if cond.kind == "null":
-        test = ir.IsNull(scope.col(cond.column), cond.negated)
-        if schema.column(cond.column).blank_count:
+        test = ir.IsNull(scope.col(cond.col), cond.negated)
+        if schema.column(cond.col).blank_count:
             # Empty text is 'missing' too ('players with an empty death record').
-            blank = ir.Compare(ir.Func("TRIM", (scope.col(cond.column),)), "!=" if cond.negated else "=",
+            blank = ir.Compare(ir.Func("TRIM", (scope.col(cond.col),)), "!=" if cond.negated else "=",
                                ir.Lit(""))
             return ir.And((test, blank)) if cond.negated else ir.Or((test, blank))
         return test
     if cond.kind == "having":
-        expr = _agg_expr(scope, cond.func, cond.column, cond.table)
+        expr = _agg_expr(scope, cond.func, cond.col, cond.table)
         return ir.Compare(expr, cond.op, ir.Lit(cond.values[0]))
     if cond.kind == "vs_group":
         counter[0] += 1
-        table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
+        table = cond.col.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.col)), table, f"q{counter[0]}_", join_choices)
         group = cond.table or ""
-        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
+        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.col))),),
                         from_=inner_from,
                         where=ir.Compare(inner_scope.col(group), "=", scope.col(group)))
-        return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
+        return ir.Compare(scope.col(cond.col), cond.op, ir.ScalarQuery(sub))
     if cond.kind == "top_group":
         counter[0] += 1
-        table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
-        col = inner_scope.col(cond.column)
+        table = cond.col.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.col)), table, f"q{counter[0]}_", join_choices)
+        col = inner_scope.col(cond.col)
         sub = ir.Select(items=(ir.SelectItem(col),), from_=inner_from, group_by=(col,),
                         order_by=(ir.OrderItem(ir.Agg("COUNT", ir.Star()), cond.func != "ASC"),),
                         limit=1)
-        return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
-    if cond.kind == "having_vs" and cond.column is None:
+        return ir.Compare(scope.col(cond.col), cond.op, ir.ScalarQuery(sub))
+    if cond.kind == "having_vs" and cond.col is None:
         # 'customers with more orders than the average customer': per-group count against
         # the overall number of counted records per subject record.
         counter[0] += 1
@@ -411,34 +321,34 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
         return ir.Compare(ir.Agg("COUNT", ir.Star()), cond.op, per_subject)
     if cond.kind == "having_vs":
         counter[0] += 1
-        table = cond.column.split(".", 1)[0]
-        inner_from, inner_scope = _from(schema, list(schema.requires(cond.column)), table, f"q{counter[0]}_", join_choices)
-        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
+        table = cond.col.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, list(schema.requires(cond.col)), table, f"q{counter[0]}_", join_choices)
+        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.col))),),
                         from_=inner_from)
-        return ir.Compare(ir.Agg(cond.func or "AVG", scope.col(cond.column)), cond.op, ir.ScalarQuery(sub))
+        return ir.Compare(ir.Agg(cond.func or "AVG", scope.col(cond.col)), cond.op, ir.ScalarQuery(sub))
     if cond.kind == "vs_aggregate":
         counter[0] += 1
-        table = cond.column.split(".", 1)[0]
+        table = cond.col.split(".", 1)[0]
         prefix = f"q{counter[0]}_"
-        tables = list(schema.requires(cond.column)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
+        tables = list(schema.requires(cond.col)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
         inner_from, inner_scope = _from(schema, tables, table, prefix, join_choices)
         where = ir.conjoin([_condition(schema, inner_scope, c, counter, join_choices)
                             for c in cond.inner])
-        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
+        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.col))),),
                         from_=inner_from, where=where)
-        return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
+        return ir.Compare(scope.col(cond.col), cond.op, ir.ScalarQuery(sub))
     if cond.kind in ("absent", "related"):
         return _membership(schema, scope, cond, counter, join_choices, negated=cond.kind == "absent")
     if cond.kind == "same_as":
         counter[0] += 1
-        table = cond.column.split(".", 1)[0]
-        tables = list(schema.requires(cond.column)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
+        table = cond.col.split(".", 1)[0]
+        tables = list(schema.requires(cond.col)) + [t for c in cond.inner if c.column for t in schema.requires(c.column)]
         inner_from, inner_scope = _from(schema, tables, table, f"q{counter[0]}_", join_choices)
         where = ir.conjoin([_condition(schema, inner_scope, c, counter, join_choices)
                             for c in cond.inner])
-        sub = ir.Select(items=(ir.SelectItem(inner_scope.col(cond.column)),), from_=inner_from,
+        sub = ir.Select(items=(ir.SelectItem(inner_scope.col(cond.col)),), from_=inner_from,
                         where=where)
-        return ir.InQuery(scope.col(cond.column), sub)
+        return ir.InQuery(scope.col(cond.col), sub)
     raise PlanError(f"Unsupported condition kind {cond.kind}")
 
 
@@ -453,7 +363,7 @@ def _membership(schema: Schema, scope: _Scope, cond: Condition, counter: list[in
                 join_choices: dict[str, str], negated: bool) -> ir.Cond:
     subject = next(iter(scope.aliases))
     target = cond.table
-    paths = schema.shortest_paths(subject, target, limit=1)
+    paths = schema.shortest_paths(subject, target, limit=1) if target else []
     if not paths or not paths[0]:
         raise PlanError(f"{subject} is not related to {target}")
     path = paths[0]
@@ -466,7 +376,7 @@ def _membership(schema: Schema, scope: _Scope, cond: Condition, counter: list[in
     inner_from, inner_scope = _from(schema, tables, first.table, prefix, join_choices)
     pairs = first.pairs
     subject_col, link_col = pairs[0]
-    where = [ir.IsNull(ir.Col(inner_scope.alias(first.table), link_col), negated=True)]
+    where: list[ir.Cond] = [ir.IsNull(ir.Col(inner_scope.alias(first.table), link_col), negated=True)]
     where += [_condition(schema, inner_scope, c, counter, join_choices) for c in cond.inner]
     sub = ir.Select(items=(ir.SelectItem(ir.Col(inner_scope.alias(first.table), link_col)),),
                     from_=inner_from, where=ir.conjoin(where))
@@ -675,7 +585,7 @@ def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]],
                   join_choices: dict[str, str]) -> ir.Query:
     """``main`` restricted by a set operation over the subject's key:
     INTERSECT: key IN (A INTERSECT B); EXCEPT: key NOT IN (removed)."""
-    subject = main.subject or (query_tables(main) or [None])[0]
+    subject = main.subject or next(iter(query_tables(main)), None)
     if subject is None:
         raise PlanError("No subject for a set operation")
     pk = schema.table(subject).primary_key
@@ -694,14 +604,15 @@ def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]],
 
     if op == "EXCEPT":
         subquery: ir.Query = key_select(*parts[0])
-        negated = True
+        exclude = True
     else:
         subquery = key_select(*parts[0])
         for part, prefix in parts[1:]:
             subquery = ir.SetOp(op, subquery, key_select(part, prefix))
-        negated = False
+        exclude = False
+    key_column = key.column or ""
     return _select(schema, main.with_(subject=subject), "", join_choices,
-                   extra_where=lambda scope: ir.InQuery(scope.col(key.column), subquery, negated))
+                   extra_where=lambda scope: ir.InQuery(scope.col(key_column), subquery, exclude))
 
 
 def output_name(schema: Schema, item: OutputItem) -> str | None:
@@ -820,10 +731,11 @@ def _nested(schema: Schema, intent: Intent, join_choices: dict[str, str]) -> ir.
             items.append(ir.SelectItem(ir.Col(alias, f"g{g}"), schema.column(o.column).label))
             g += 1
     order = []
-    for o in intent.order:
+    for ordering in intent.order:
         for i, n in enumerate(nested):
-            if (o.func, o.column, o.table) in ((n.func, n.column, n.table), ("SUM", n.column, None)):
-                order.append(ir.OrderItem(ir.Agg(n.func or "AVG", ir.Col(alias, f"v{i}")), o.desc))
+            if (ordering.func, ordering.column, ordering.table) in ((n.func, n.column, n.table),
+                                                                   ("SUM", n.column, None)):
+                order.append(ir.OrderItem(ir.Agg(n.func or "AVG", ir.Col(alias, f"v{i}")), ordering.desc))
     return ir.Select(items=tuple(items), from_=ir.From(ir.Derived(inner, alias)),
                      group_by=tuple(ir.Col(alias, f"g{i}") for i in range(len(groups))),
                      order_by=tuple(order), limit=intent.limit if order else None)

@@ -127,7 +127,7 @@ def _parse_number(text: str) -> int | float:
 
 
 def _schema_words(schema: Schema) -> set[str]:
-    words = set()
+    words: set[str] = set()
     for table in schema.tables.values():
         words.update(lemma(w) for w in table.label.split())
         for column in table.columns:
@@ -221,20 +221,20 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             start, end = tokens[i].start, tokens[j - 1].end
             surface = question[start:end]
             norm = _normalize(surface)
-            matches = index.exact.get(norm)
-            if not matches and question[end:end + 2] in ("'s", "’s"):
+            hits = index.exact.get(norm) or ()
+            if not hits and question[end:end + 2] in ("'s", "’s"):
                 # A stored value with a possessive ("McDonald's"): the tokenizer splits it off.
-                matches = index.exact.get(_normalize(question[start:end + 2]))
-                if matches:
+                hits = index.exact.get(_normalize(question[start:end + 2])) or ()
+                if hits:
                     end += 2
                     surface = question[start:end]
-            if not matches and norm.endswith("s") and len(norm) > 3:
+            if not hits and norm.endswith("s") and len(norm) > 3:
                 # 'goalies' for a stored 'goalie', 'countries' for 'country'.
                 for singular in _singulars(norm):
-                    matches = index.exact.get(singular)
-                    if matches:
+                    hits = index.exact.get(singular) or ()
+                    if hits:
                         break
-            if not matches:
+            if not hits:
                 continue
             words = [t.lower for t in tokens[i:j]]
             if all(w in STOPWORDS for w in words) and not all(t.text.isupper() for t in tokens[i:j]):
@@ -247,19 +247,19 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
                     0 <= n < len(tokens) and tokens[n].text[:1].isupper() for n in (i - 1, i + 1))
                 if len(word) <= 2 and not word.isupper() and not word.isdigit() and not in_name and not (
                         i > 0 and any(schema.column(k).label.split()[-1] == lemma(tokens[i - 1].text)
-                                      for k, _ in matches)):
+                                      for k, _ in hits)):
                     continue
                 if (word.islower() and lemma(word) in schema_words and not word.isdigit()):
                     continue
                 if word.isdigit():
-                    continue  # numbers are handled below, with value matches attached
-                if word.lower() in NUMBER_WORDS and not any(str(v) == word for _, v in matches):
+                    continue  # numbers are handled below, with value hits attached
+                if word.lower() in NUMBER_WORDS and not any(str(v) == word for _, v in hits):
                     continue  # 'two or more regions' is a number, not the storm named 'Two'
-            spans.append((j - i, start, end, surface, matches))
+            spans.append((j - i, start, end, surface, hits))
             break
-    for _, start, end, surface, matches in sorted(spans, key=lambda s: (-s[0], s[1])):
+    for _, start, end, surface, hits in sorted(spans, key=lambda s: (-s[0], s[1])):
         if free(start, end):
-            add(surface, matches[0][1], "text", start, end, matches, exact=True)
+            add(surface, hits[0][1], "text", start, end, hits, exact=True)
 
     # 3. Numbers (digits and number words).
     for match in _NUMBER.finditer(question):
@@ -270,20 +270,20 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
         add(text, _parse_number(text), "number", match.start(), match.end(), matches,
             exact=bool(matches))
     for token in tokens:
-        value = NUMBER_WORDS.get(token.lower)
-        if value is None or not free(token.start, token.end):
+        word_value = NUMBER_WORDS.get(token.lower)
+        if word_value is None or not free(token.start, token.end):
             continue
         if token.lower == "one" and _one_is_pronoun(question, token):
             continue
-        add(token.text, value, "number", token.start, token.end)
+        add(token.text, word_value, "number", token.start, token.end)
     for position, token in enumerate(tokens):
-        value = ORDINALS.get(token.lower)
-        if value is None or not free(token.start, token.end) or token.lower == "first":
+        ordinal = ORDINALS.get(token.lower)
+        if ordinal is None or not free(token.start, token.end) or token.lower == "first":
             continue
         following = tokens[position + 1].lower if position + 1 < len(tokens) else ""
         if following.endswith("est") or following in ("most", "least", "highest", "lowest"):
             continue      # 'second highest' is a rank offset, not a value
-        add(token.text, value, "number", token.start, token.end)
+        add(token.text, ordinal, "number", token.start, token.end)
 
     # 4. Capitalized spans not found verbatim: fuzzy candidates (typos, case).
     for start, end, surface in _capitalized_spans(question, tokens):
@@ -291,9 +291,9 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             continue
         if lemma(surface.lower()) in schema_words and " " not in surface:
             continue
-        matches = _fuzzy(index, surface) or _probe_large_columns(schema, surface)
-        if matches:
-            add(surface, matches[0][1], "text", start, end, matches)
+        fuzzy = _fuzzy(index, surface) or _probe_large_columns(schema, surface)
+        if fuzzy:
+            add(surface, fuzzy[0][1], "text", start, end, fuzzy)
         elif not _names_schema(surface, schema_words):
             # A proper noun the database does not contain ('from Brazil') is still a
             # condition: dropping it would silently widen the answer.

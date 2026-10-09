@@ -13,8 +13,8 @@ try:  # Benchmark-only dependency.
     import sqlglot
     from sqlglot import exp
 except ImportError:  # pragma: no cover - optional
-    sqlglot = None
-    exp = None
+    sqlglot = None  # type: ignore[assignment]
+    exp = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)

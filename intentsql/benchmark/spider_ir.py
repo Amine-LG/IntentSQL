@@ -46,8 +46,9 @@ class _Converter:
     def col_unit(self, unit: Any, aliases: dict[int, str]) -> ir.Expr:
         agg_id, col_id, distinct = unit
         expr = self.column(col_id, aliases)
-        if AGG[agg_id]:
-            return ir.Agg(AGG[agg_id], expr, bool(distinct))
+        func = AGG[agg_id]
+        if func:
+            return ir.Agg(func, expr, bool(distinct))
         if distinct and not self.allow_distinct:
             raise Unconvertible("distinct column outside aggregate")
         return expr
@@ -55,8 +56,9 @@ class _Converter:
     def val_unit(self, unit: Any, aliases: dict[int, str]) -> ir.Expr:
         op, left, right = unit
         expr = self.col_unit(left, aliases)
-        if op:
-            expr = ir.BinOp(UNIT[op], expr, self.col_unit(right, aliases))
+        operator = UNIT[op]
+        if operator:
+            expr = ir.BinOp(operator, expr, self.col_unit(right, aliases))
         return expr
 
     def value(self, value: Any, aliases: dict[int, str]) -> ir.Expr:
@@ -163,15 +165,16 @@ class _Converter:
                 expr = self.val_unit(val_unit, aliases)
             finally:
                 self.allow_distinct = False
-            if AGG[agg_id]:
+            func = AGG[agg_id]
+            if func:
                 if isinstance(expr, ir.Agg):
                     raise Unconvertible("nested aggregate")
                 inner_distinct = False
                 if isinstance(expr, ir.Col | ir.Star) and val_unit[1][2]:
                     inner_distinct = True
-                expr = ir.Agg(AGG[agg_id], expr, inner_distinct)
+                expr = ir.Agg(func, expr, inner_distinct)
             items.append(ir.SelectItem(expr))
-        order = ()
+        order: tuple[ir.OrderItem, ...] = ()
         if sql["orderBy"]:
             direction, units_ = sql["orderBy"]
             order = tuple(ir.OrderItem(self.val_unit(u, aliases), direction == "desc")

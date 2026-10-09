@@ -82,6 +82,13 @@ class Answer:
             return max(self.p or 0.0, 1 - (self.p or 0.0))
         return max(self.probabilities.values()) if self.probabilities else 0.0
 
+    @property
+    def picked(self) -> str:
+        """The chosen option key of a Choice (validated answers always have one)."""
+        if self.choice is None:
+            raise JevError(f"A {self.kind} answer has no choice")
+        return self.choice
+
     def ranked(self) -> list[tuple[str, float]]:
         return sorted(self.probabilities.items(), key=lambda kv: -kv[1])
 

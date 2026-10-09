@@ -457,7 +457,7 @@ def _infer_foreign_keys(tables: dict[str, Table], declared: list[ForeignKey]) ->
     """Infer obvious undeclared links: ``<table>_id`` columns matching a single-column PK."""
     known = {(fk.table, fk.columns) for fk in declared}
     inferred = []
-    pk_index = {}
+    pk_index: dict[str, list[str]] = {}
     for table in tables.values():
         if len(table.primary_key) == 1:
             pk_index.setdefault(table.primary_key[0].lower(), []).append(table.name)
