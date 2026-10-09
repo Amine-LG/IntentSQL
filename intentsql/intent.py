@@ -321,7 +321,13 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "in_values":
         return ir.InList(scope.col(cond.column), tuple(ir.Lit(v) for v in cond.values), cond.negated)
     if cond.kind == "null":
-        return ir.IsNull(scope.col(cond.column), cond.negated)
+        test = ir.IsNull(scope.col(cond.column), cond.negated)
+        if schema.column(cond.column).blank_count:
+            # Empty text is 'missing' too ('players with an empty death record').
+            blank = ir.Compare(ir.Func("TRIM", (scope.col(cond.column),)), "!=" if cond.negated else "=",
+                               ir.Lit(""))
+            return ir.And((test, blank)) if cond.negated else ir.Or((test, blank))
+        return test
     if cond.kind == "having":
         expr = _agg_expr(scope, cond.func, cond.column, cond.table)
         return ir.Compare(expr, cond.op, ir.Lit(cond.values[0]))

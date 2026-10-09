@@ -42,7 +42,7 @@ def lemma(word: str) -> str:
         return w
     if w.endswith("ies") and len(w) > 4:
         return w[:-3] + "y"
-    if w.endswith(("ches", "shes", "sses", "xes", "zes")):
+    if w.endswith(("ches", "shes", "sses", "xes", "zes", "uses")):
         return w[:-2]
     if w.endswith("s") and not w.endswith(_KEEP_S):
         return w[:-1]

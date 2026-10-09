@@ -64,7 +64,11 @@ NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neithe
                           r"lacks?|apart from|besides)\b|n't\b", re.I)
 AGG_COMPARE_CUE = re.compile(r"\b(average|mean|than (any|all|every|each|the (maximum|minimum|largest|"
                              r"smallest|highest|lowest|max|min))|than (that|those) of)\b", re.I)
-THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b", re.I)
+THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b|"
+                      r"\b(order|sort)\w* by \w+(?: \w+){0,4} and\b", re.I)
+EXCEPT_CUE = re.compile(r"\b(except|excluding|never|without|other than|apart from|besides|"
+                        r"(?:do|does|did|have|has)(?:n't| not) (?:have|own|make|contain|include|got)|"
+                        r"(?:don't|doesn't|didn't) have)\b", re.I)
 TOP_GROUP_CUE = re.compile(r"\b(most|least)\s+(common|popular|frequent|usual)\b", re.I)
 NULL_CUE = re.compile(r"\b(without|missing|unknown|empty|null|blank|lacks?|lacking|not (?:set|given|"
                       r"recorded|specified|available|assigned|provided|known|listed)|(?:do|does|did)(?: not|n't) "
@@ -335,7 +339,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
 
     if NULL_CUE.search(g.question):
         for column in columns:
-            if column.null_count and not column.primary_key:
+            if (column.null_count or column.blank_count) and not column.primary_key:
                 phrase = column_phrase(schema, column.key)
                 cands.nulls.append(Option(f"n{len(cands.nulls)}", f"only results whose {phrase} is missing (empty, unknown)",
                                           Condition("null", column.key)))
@@ -899,7 +903,8 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                 continue
         if exclude and condition.op not in ("!=", "not_contains"):
             excluded.append(condition)
-        elif exclude and not _identifies_rows(schema, key.split(".")[0], outputs):
+        elif exclude and EXCEPT_CUE.search(g.question) and not _identifies_rows(
+                schema, key.split(".")[0], outputs):
             # 'publishers which do not have a book in 1989': a publisher qualifies when none
             # of its rows matches -- a set difference, not a row filter.
             excluded.append(_positive(condition))
@@ -1040,6 +1045,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                     and not _identifies_rows(schema, o.column.split(".")[0], [o])
                     and o.column.split(".")[0] == group_by[0].split(".")[0]):
                 group_by.append(o.column)
+        outputs = [o for o in outputs if not _ungrouped(schema, o, group_by)]
         group_classes = set(schema.equivalents(group_by[0]))
         outputs = [OutputItem("COUNT", None, o.column.split(".")[0])
                    if o.func == "COUNT" and o.distinct and o.column in group_classes else o
@@ -1179,7 +1185,7 @@ def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list
     usually one request read twice: ask which one is meant."""
     count = next((o for o in outputs if o.func == "COUNT" and o.column is None), None)
     total = next((o for o in outputs if o.func == "SUM" and o.column), None)
-    if count is None or total is None or group_by:
+    if count is None or total is None:
         return outputs
     key = "conflict_count_sum"
     if key not in answers:
@@ -1209,6 +1215,19 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
     tables = query_tables(intent)
     related = {c.table for c in intent.conditions if c.kind == "related"}
     via: list[str] = list(intent.via)
+    subject = intent.subject
+    for target in related:
+        # 'students taking ACCT-211': when the request names a relationship (taking ->
+        # enrollments), reach the other tables through it rather than a shorter detour.
+        for table in tables:
+            if not subject or table in (subject, target) or target in tables:
+                continue
+            direct = schema.shortest_paths(subject, table, limit=1)
+            through = schema.shortest_paths(target, table, limit=1)
+            first = schema.shortest_paths(subject, target, limit=1)
+            if (direct and through and first and target not in {s.table for s in direct[0]}
+                    and len(first[0]) + len(through[0]) <= len(direct[0]) + 2):
+                via.extend([s.table for s in first[0]] + [s.table for s in through[0]])
     for i, a in enumerate(tables):
         for b in tables[i + 1:]:
             paths = schema.shortest_paths(a, b, limit=4)
@@ -1239,6 +1258,22 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
     if tuple(via) == intent.via:
         return intent
     return intent.with_(via=tuple(dict.fromkeys(via)))
+
+
+def _ungrouped(schema: Schema, item: OutputItem, group_by: list[str]) -> bool:
+    """A plain value that varies within a group (allergy name per allergy type) has no
+    single value to show; values of a record that the group identifies are fine."""
+    if item.is_aggregate or not item.column or item.star:
+        return False
+    if any(item.column in schema.equivalents(k) for k in group_by):
+        return False
+    table = item.column.split(".")[0]
+    for key in group_by:
+        for member in schema.equivalents(key):
+            if member.split(".")[0] == table and _identifies_rows(
+                    schema, table, [OutputItem(None, member)]):
+                return False
+    return True
 
 
 def _group_label(schema: Schema, key: str, outputs: list[OutputItem],

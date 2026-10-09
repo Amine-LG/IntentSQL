@@ -15,6 +15,7 @@ from typing import Any
 
 from intentsql.intent import Condition, Intent, Ordering, OutputItem, _effective_groups, entity
 from intentsql.schema import Schema
+from intentsql.text import lemma
 
 FUNC = {"SUM": "total", "AVG": "average", "MIN": "minimum", "MAX": "maximum"}
 OPS = {"=": "is", "!=": "is not", ">": "is greater than", "<": "is less than",
@@ -27,6 +28,9 @@ COUNT_OPS = {"=": "exactly", ">": "more than", "<": "fewer than", ">=": "at leas
 def plural(noun: str) -> str:
     words = noun.split()
     last = words[-1] if words else noun
+    if last.endswith(("ics", "ies", "series", "data", "staff", "people")) or (
+            last.endswith("s") and lemma(last) != last):
+        return noun                                     # already plural
     if last.endswith(("s", "x", "z", "ch", "sh")):
         last += "es"
     elif last.endswith("y") and len(last) > 1 and last[-2] not in "aeiou":
@@ -172,8 +176,9 @@ def describe(schema: Schema, intent: Intent) -> str:
         if groups:
             group_labels = [_group_label(schema, g, subject) for g in groups]
             shown = [o for o in intent.outputs if not (o.column in groups and not o.is_aggregate)]
-            items = [_output(schema, o, subject) for o in shown] or ["the group"]
-            text = f"For each {_join(group_labels)}, give " + _join(items)
+            items = [_output(schema, o, subject) for o in shown]
+            text = (f"For each {_join(group_labels)}, give " + _join(items) if items
+                    else f"List each {_join(group_labels)}")
             if restrict:
                 text += f", counting only {plural(subject_name)} {restrict}"
         else:

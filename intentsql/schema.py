@@ -43,6 +43,7 @@ class Column:
     distinct_count: int | None = None
     null_count: int | None = None
     storage: str = "text"     # dominant SQLite storage class of stored values
+    blank_count: int = 0      # empty strings, which people also call 'missing'
 
     @property
     def key(self) -> str:
@@ -459,14 +460,15 @@ def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:
             try:
                 sample = [r[0] for r in conn.execute(
                     f"SELECT {qcol} FROM {qname} WHERE {qcol} IS NOT NULL LIMIT {SAMPLE_SIZE}")]
-                distinct, nulls = conn.execute(
-                    f"SELECT COUNT(DISTINCT {qcol}), SUM({qcol} IS NULL) FROM {qname}").fetchone()
+                distinct, nulls, blanks = conn.execute(
+                    f"SELECT COUNT(DISTINCT {qcol}), SUM({qcol} IS NULL), "
+                    f"SUM(TRIM(CAST({qcol} AS TEXT)) = '') FROM {qname}").fetchone()
             except sqlite3.Error:
-                sample, distinct, nulls = [], None, None
+                sample, distinct, nulls, blanks = [], None, None, 0
             kind = _profile_kind(_declared_kind(declared or ""), sample)
             columns.append(Column(name, col_name, declared or "", kind, bool(pk_pos),
                                   bool(not_null), humanize(col_name), distinct, nulls or 0,
-                                  _storage(sample)))
+                                  _storage(sample), blanks or 0))
             if (kind in (TEXT, DATE, BOOLEAN, OTHER) and distinct and distinct <= VALUE_INDEX_LIMIT) or (
                     kind == NUMBER and distinct == 2):
                 values[f"{name}.{col_name}"] = tuple(
