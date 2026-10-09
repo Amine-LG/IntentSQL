@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from intentsql.intent import Condition, Intent, Ordering, OutputItem, _effective_groups, entity
-from intentsql.schema import Schema
+from intentsql.intent import Condition, Intent, Ordering, OutputItem, _effective_groups, _is_year, entity
+from intentsql.schema import DATE, Schema, flag_values
 from intentsql.text import lemma
 
 FUNC = {"SUM": "total", "AVG": "average", "MIN": "minimum", "MAX": "maximum"}
@@ -68,6 +68,17 @@ def _label(schema: Schema, key: str, subject: str | None) -> str:
 def _output(schema: Schema, item: OutputItem, subject: str | None) -> str:
     if item.star:
         return f"all details of the {plural(entity(schema, item.table or ''))}"
+    if item.func == "PCT":
+        counted = plural(entity(schema, item.table or ""))
+        part = _join([condition(schema, c, item.table) for c in item.where])
+        return f"the percentage of {counted} {part}".rstrip()
+    if item.per:
+        per = entity(schema, item.per)
+        word = {"AVG": "average", "MAX": "largest", "MIN": "smallest"}.get(item.func or "", "total")
+        if item.column is None:
+            return (f"the {word} number of {plural(entity(schema, item.table or ''))} per {per} "
+                    f"(counting {plural(per)} with none as 0)")
+        return f"the {word} per-{per} total of the {_label(schema, item.column, subject)}"
     if item.column is None:
         return f"the number of {plural(entity(schema, item.table or ''))}"
     label = _label(schema, item.column, subject)
@@ -99,11 +110,22 @@ def condition(schema: Schema, cond: Condition, subject: str | None) -> str:
         return (f"whose {FUNC.get(cond.func or 'SUM', 'total')} {_label(schema, cond.column, subject)} "
                 f"{OPS[cond.op]} {_value(cond.values[0])}")
     label = _label(schema, cond.column, subject) if cond.column else "value"
+    if kind == "compare" and cond.op in ("=", "!=") and cond.column:
+        flag = flag_values(schema.values.get(cond.column, ()))
+        if flag and str(cond.values[0]) in flag:
+            positive = (str(cond.values[0]) == flag[0]) == (cond.op == "=")
+            return f"that {'is' if positive else 'is not'} {schema.column(cond.column).label}"
+    if kind == "compare" and cond.column and schema.column(cond.column).kind == DATE and _is_year(cond.values[0]):
+        word = {"=": "in", "!=": "not in", ">": "after", "<": "before", ">=": "in or after",
+                "<=": "in or before"}[cond.op]
+        return f"whose {label} is {word} {cond.values[0]}"
     if kind in ("compare", "text"):
         return f"whose {label} {OPS[cond.op]} {_value(cond.values[0])}"
     if kind == "columns":
         word = {"=": "is the same as", "!=": "is different from"}.get(cond.op, OPS[cond.op])
         return f"whose {label} {word} the {_label(schema, cond.values[0], subject)}"
+    if kind == "period":
+        return f"whose {label} is in {cond.values[2]}"
     if kind == "between":
         return f"whose {label} is between {_value(cond.values[0])} and {_value(cond.values[1])}"
     if kind == "in_values":
@@ -121,6 +143,10 @@ def condition(schema: Schema, cond: Condition, subject: str | None) -> str:
             inner = _join([condition(schema, c, table) for c in cond.inner])
             return f"whose {label} {word} the {func} {label} of the {plural(entity(schema, table))} {inner}"
         return f"whose {label} {word} the {func} {label} of all {plural(entity(schema, table))}"
+    if kind == "having_vs" and cond.column is None:
+        subject_name = entity(schema, cond.values[0])
+        return (f"that has {'more' if cond.op == '>' else 'fewer'} {plural(entity(schema, cond.table or ''))} "
+                f"than the average {subject_name}")
     if kind == "having_vs":
         return (f"whose average {label} is {'above' if cond.op == '>' else 'below'} the average "
                 f"{label} of all {plural(entity(schema, cond.column.split('.')[0]))}")
@@ -176,6 +202,10 @@ def describe(schema: Schema, intent: Intent) -> str:
         text = f"Count the {plural(entity(schema, counted))}"
         if restrict:
             text += " " + restrict
+    elif aggregates and not plain and not groups and all(o.func == "PCT" or o.per for o in aggregates):
+        text = "Give " + _join([_output(schema, o, subject) for o in aggregates])
+        if restrict:
+            text += f", counting only {plural(subject_name)} {restrict}"
     elif aggregates and not plain and not groups:
         text = "Give " + _join([_output(schema, o, subject) for o in aggregates])
         text += f" of the {plural(subject_name)}" + (f" {restrict}" if restrict else "")
@@ -186,6 +216,8 @@ def describe(schema: Schema, intent: Intent) -> str:
             items = [_output(schema, o, subject) for o in shown]
             text = (f"For each {_join(group_labels)}, give " + _join(items) if items
                     else f"List each {_join(group_labels)}")
+            if intent.keep_empty:
+                text += " (including those with none)"
             if restrict:
                 text += f", counting only {plural(subject_name)} {restrict}"
         else:
@@ -200,7 +232,10 @@ def describe(schema: Schema, intent: Intent) -> str:
         text += ", except those " + _join([condition(schema, c, subject) for c in intent.excluded])
     if intent.order:
         text += ", sorted " + ", then ".join(_order(schema, o, subject) for o in intent.order)
-    if intent.limit is not None:
+    if intent.limit is not None and intent.limit_per:
+        text += (f", keeping only the top {intent.limit} within each "
+                 f"{_group_label(schema, intent.limit_per, subject)}")
+    elif intent.limit is not None:
         if intent.offset:
             text += f", skipping the first {intent.offset} and keeping the next {intent.limit}"
         else:

@@ -15,6 +15,7 @@ AGGREGATES = ("COUNT", "SUM", "AVG", "MIN", "MAX")
 COMPARISONS = ("=", "!=", "<", "<=", ">", ">=")
 ARITHMETIC = ("+", "-", "*", "/")
 SET_OPERATORS = ("UNION", "UNION ALL", "INTERSECT", "EXCEPT")
+WINDOW_FUNCTIONS = ("ROW_NUMBER", "RANK", "DENSE_RANK")
 # SQLite scalar functions the compiler accepts, with (min, max) argument counts.
 FUNCTIONS = {
     "LOWER": (1, 1), "UPPER": (1, 1), "LENGTH": (1, 1), "TRIM": (1, 2), "ABS": (1, 1),
@@ -74,7 +75,15 @@ class ScalarQuery:
     query: Query
 
 
-Expr = Union[Col, Star, Lit, Agg, BinOp, Func, Case, ScalarQuery]  # noqa: UP007 (forward references)
+@dataclass(frozen=True)
+class Window:
+    """A ranking window function: ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)."""
+    func: str
+    partition: tuple[Expr, ...]
+    order: tuple[OrderItem, ...]
+
+
+Expr = Union[Col, Star, Lit, Agg, BinOp, Func, Case, ScalarQuery, Window]  # noqa: UP007 (forward references)
 
 
 # ---- conditions -------------------------------------------------------------------
@@ -154,6 +163,13 @@ class TableRef:
 
 
 @dataclass(frozen=True)
+class Derived:
+    """A subquery in FROM; its columns are the aliases of its select items."""
+    query: Select
+    alias: str
+
+
+@dataclass(frozen=True)
 class Join:
     right: TableRef
     on: tuple[tuple[Col, Col], ...]
@@ -162,11 +178,11 @@ class Join:
 
 @dataclass(frozen=True)
 class From:
-    base: TableRef
+    base: TableRef | Derived
     joins: tuple[Join, ...] = ()
 
     @property
-    def refs(self) -> tuple[TableRef, ...]:
+    def refs(self) -> tuple[TableRef | Derived, ...]:
         return (self.base,) + tuple(j.right for j in self.joins)
 
 
@@ -254,7 +270,7 @@ def has_aggregate(expr: Any) -> bool:
     """True when ``expr`` aggregates at this query level (subqueries excluded)."""
     if isinstance(expr, Agg):
         return True
-    if isinstance(expr, (ScalarQuery, InQuery, Exists, Select, SetOp)):
+    if isinstance(expr, (ScalarQuery, InQuery, Exists, Select, SetOp, Derived)):
         return False
     if is_dataclass(expr) and not isinstance(expr, type):
         return any(has_aggregate(getattr(expr, f.name)) for f in fields(expr))

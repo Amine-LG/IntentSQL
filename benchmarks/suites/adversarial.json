@@ -456,7 +456,8 @@
    "database": "retail.sqlite",
    "question": "What are the top 3 categories by average order line value?",
    "gold_sql": [
-    "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"
+    "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3",
+    "SELECT T3.name, AVG(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"
    ],
    "ordered": true,
    "expect": "answer",
@@ -468,7 +469,8 @@
    "database": "retail.sqlite",
    "question": "Which three categories have the highest average sales amount per order line?",
    "gold_sql": [
-    "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"
+    "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3",
+    "SELECT T3.name, AVG(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"
    ],
    "ordered": true,
    "expect": "answer",

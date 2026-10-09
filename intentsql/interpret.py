@@ -23,7 +23,7 @@ from typing import Any
 from intentsql.grounding import Grounding, Literal
 from intentsql.intent import Condition, Intent, Ordering, OutputItem, _negate, column_phrase, entity
 from intentsql.jev import Answer, Question, choice, noul
-from intentsql.schema import BOOLEAN, DATE, NUMBER, TEXT, Column, Schema
+from intentsql.schema import BOOLEAN, DATE, NUMBER, TEXT, Column, Schema, flag_values
 from intentsql.text import ORDINALS
 
 NUMERIC_OPS = {"=": "equal to", ">": "greater than (more, over, above, older, larger)",
@@ -33,6 +33,7 @@ NUMERIC_OPS = {"=": "equal to", ">": "greater than (more, over, above, older, la
 DATE_OPS = {"=": "on exactly this date", ">": "after this date", "<": "before this date",
             ">=": "on or after this date", "<=": "on or before this date",
             "!=": "not on this date"}
+PERIOD_OPS = {"within": "during this period", "<": "before this period", ">": "after this period"}
 EXACT_TEXT_OPS = {"=": "results have exactly this value",
                   "!=": "results must NOT have this value (the request negates it: 'not', 'other than')"}
 PARTIAL_TEXT_OPS = {"contains": "the attribute contains this text somewhere (e.g. 'with X in the name', 'about X')",
@@ -65,10 +66,14 @@ NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neithe
 AGG_COMPARE_CUE = re.compile(r"\b(average|mean|(than|above|below|over|under|exceed\w*|beyond) (any|all|every|"
                              r"each|the (maximum|minimum|largest|smallest|highest|lowest|max|min))|"
                              r"than (that|those) of)\b", re.I)
+COMPARATIVE_CUE = re.compile(r"\b(than|above|below|over|under|exceed\w*|beyond|more|less|fewer|higher|lower|"
+                             r"greater|smaller|bigger|larger|at least|at most|outperform\w*)\b", re.I)
 # 'older than every engineer', 'above any wine from 2006': the literal describes the
 # records the aggregate is computed over, not the results.
 QUANTIFIED_CUE = re.compile(r"\b(than|above|below|over|under|exceed\w*|beyond) (any|all|every|each)\b", re.I)
-ALWAYS_CUE = re.compile(r"\b(always|every time|only ever|at all times|consistently)\b", re.I)
+ALWAYS_CUE = re.compile(r"\b(always|every time|only ever|at all times|consistently|(?:has|have|had) only|"
+                        r"only (?:has|have|had|contain\w*|sell\w*|stock\w*|include\w*|offer\w*)|"
+                        r"all (?:of )?(?:its|their) \w+ (?:are|were|have|had))\b", re.I)
 BOTH_CUE = re.compile(r"\bboth\b|\bnot only\b.+\bbut also\b|\bas well as\b|\band also\b", re.I)
 THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b|"
                       r"\b(order|sort)\w* by \w+(?: \w+){0,4} and\b", re.I)
@@ -84,8 +89,14 @@ OWN_GROUP_CUE = re.compile(r"\b(their|its|his|her|own|same|respective|within|tha
 PER_GROUP_SUPERLATIVE = re.compile(r"\b(\w+est|most \w+|least \w+|highest|lowest|top)\b.*\b(in|of|for|within) "
                                    r"(each|every|its|their)\b|\b(each|every|per)\b.*\b(\w+est|highest|lowest)\b",
                                    re.I)
-COLUMN_COMPARE_CUE = re.compile(r"\b(than|same|equal\w*|identical|match\w*|differ\w*|exceed\w*|"
+COLUMN_COMPARE_CUE = re.compile(r"\b(than|same|equal\w*|identical|match\w*|differ\w*|exceed\w*|before|after|"
+                                r"earlier|later|older|younger|"
                                 r"as (?:high|low|much|many|large|big|long) as)\b", re.I)
+PCT_CUE = re.compile(r"\b(percent\w*|proportion|share|fraction)\b|%", re.I)
+KEEP_EMPTY_CUE = re.compile(r"\b(including|include|even) (?:those|the ones|\w+ )?(?:with|that have|having|"
+                            r"without) (?:no|zero|none|any)\b|\b(?:with|including|show(?:ing)?) zeros?\b|"
+                            r"\beven (?:if|when|those with) (?:they|it)? ?(?:have|has)? ?(?:none|no|zero)\b", re.I)
+EACH_CUE = re.compile(r"\b(each|every|per|within)\b", re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
 MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
@@ -185,7 +196,7 @@ def relevant_tables(g: Grounding, max_columns: int = 90) -> list[str]:
     keep = [t for t in scored if score(t) > 0][:8] or scored[:4]
     for table in list(keep):
         for other in schema.neighbors(table):
-            if schema.is_bridge(other) and other not in keep:
+            if (schema.is_bridge(other) or schema.is_role(other)) and other not in keep:
                 keep.append(other)
     total = sum(len(schema.tables[t].columns) for t in keep)
     for table in scored:
@@ -258,10 +269,21 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
 
     # Counts: one exclusive choice.
     for table in _by_relevance(g, tables):
-        if not schema.is_bridge(table):
+        if schema.countable(table):
             cands.counts.append(Option(f"t{len(cands.counts)}",
                                        f"how many {entity(schema, table)} records there are",
                                        OutputItem("COUNT", None, table)))
+    if EXPLICIT_AGG["AVG"].search(g.question):
+        # 'the average number of orders per customer' (customers without orders count as 0).
+        for parent in _by_relevance(g, tables):
+            for child in tables:
+                if (parent != child and g.table_link.get(parent, 0) > 0 and g.table_link.get(child, 0) > 0
+                        and schema.countable(parent) and schema.countable(child)
+                        and schema.one_to_many(parent, child)):
+                    cands.counts.append(Option(
+                        f"t{len(cands.counts)}",
+                        f"the average number of {entity(schema, child)} records per {entity(schema, parent)}",
+                        OutputItem("AVG", None, child, per=parent)))
     if DISTINCT_CUE.search(g.question) or COUNT_KINDS_CUE.search(g.question):
         # Counting distinct values only when the request says so ('how many different
         # cities'); otherwise these options pull counts toward the filtered column.
@@ -274,7 +296,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     if STAR_CUE.search(g.question):
         cands.stars = [Option(f"w{i}", f"every attribute of the {entity(schema, t)} records",
                               OutputItem(None, None, t, star=True))
-                       for i, t in enumerate(t for t in tables if not schema.is_bridge(t))]
+                       for i, t in enumerate(t for t in tables if schema.countable(t))]
     if len(COUNT_CUE.findall(g.question)) >= 2:
         cands.multi_count = [o for o in cands.counts if o.payload.column is None]
 
@@ -286,6 +308,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         if column.is_numeric and not column.is_identifier:
             options += [Option(func, f"the {word} {phrase}", OutputItem(func, column.key))
                         for func, word in AGG_FUNCS]
+            options += _nested_options(g, column, phrase, tables)
         cands.outputs.append(OutputGroup(f"o{i}", phrase, options))
     cue_funcs = [f for f, cue in AGG_WORDS.items() if cue.search(g.question)]
     if len(cue_funcs) >= 2 and any(cue.search(g.question) for cue in EXPLICIT_AGG.values()) or len(
@@ -311,7 +334,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         values = schema.values.get(column.key, ())
         if (column.kind in (TEXT, BOOLEAN) or column.kind == NUMBER) and 2 <= len(values) <= CATEGORICAL_MAX:
             phrase = column_phrase(schema, column.key)
-            flag = _flag_values(values)
+            flag = flag_values(values)
             if flag:
                 yes, no = flag
                 plural_entity = entity(schema, column.table) + "s"
@@ -323,13 +346,13 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                                  for i, v in enumerate(values)]
 
     for subject in tables:
-        if schema.is_bridge(subject):
+        if not schema.countable(subject):
             continue
         for target in _related_targets(schema, subject):
             if target in tables:
                 cands.relations.append((f"r{len(cands.relations)}", subject, target))
 
-    if AGG_COMPARE_CUE.search(g.question):
+    if AGG_COMPARE_CUE.search(g.question) and COMPARATIVE_CUE.search(g.question):
         for column in columns:
             if column.is_numeric and not column.is_identifier:
                 phrase = column_phrase(schema, column.key)
@@ -344,6 +367,17 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                         f"a{len(cands.vs_aggregate)}",
                         f"each group's average {phrase} is {word} the average {phrase} of all {label} records",
                         Condition("having_vs", column.key, op, func="AVG")))
+        for subject in _by_relevance(g, tables):
+            if not schema.countable(subject):
+                continue
+            for target in _related_targets(schema, subject):
+                if target in tables and schema.countable(target) and schema.one_to_many(subject, target):
+                    s_label, t_label = entity(schema, subject), entity(schema, target)
+                    for op, word in ((">", "more"), ("<", "fewer")):
+                        cands.vs_aggregate.append(Option(
+                            f"a{len(cands.vs_aggregate)}",
+                            f"each {s_label} has {word} {t_label} records than the average {s_label}",
+                            Condition("having_vs", None, op, (subject,), func="COUNT", table=target)))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
     if NULL_CUE.search(g.question):
@@ -356,7 +390,8 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                           Condition("null", column.key, negated=True)))
         cands.nulls = cands.nulls[:250]
 
-    if (AGG_COMPARE_CUE.search(g.question) and OWN_GROUP_CUE.search(g.question)) or PER_GROUP_SUPERLATIVE.search(g.question):
+    if (AGG_COMPARE_CUE.search(g.question) and COMPARATIVE_CUE.search(g.question)
+            and OWN_GROUP_CUE.search(g.question)) or PER_GROUP_SUPERLATIVE.search(g.question):
         for column in columns:
             if not column.is_numeric or schema.is_key(column.key):
                 continue
@@ -428,40 +463,65 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     return cands
 
 
+def _nested_options(g: Grounding, column: Column, phrase: str, tables: list[str]) -> list[Option]:
+    """'the average order value': an aggregate over parent records (orders) of each one's
+    total of a child attribute (order lines), offered when the request names the parent."""
+    schema = g.schema
+    options = []
+    funcs = [(f, w) for f, w in (("AVG", "average"), ("MAX", "largest"), ("MIN", "smallest"))
+             if AGG_WORDS[f].search(g.question)]
+    for parent in tables:
+        if (parent == column.table or g.table_link.get(parent, 0) <= 0 or not schema.countable(parent)
+                or not schema.one_to_many(parent, column.table)):
+            continue
+        name = entity(schema, parent)
+        for func, word in funcs:
+            options.append(Option(f"{func}per{parent}",
+                                  f"the {word} per-{name} total of the {phrase} (add up each {name}'s "
+                                  f"{phrase}, then take the {word} over {name}s)",
+                                  OutputItem(func, column.key, per=parent)))
+    return options
+
+
 def _column_comparisons(g: Grounding, columns: list[Column]) -> list[Option]:
     """'candidates with a lower support rate than oppose rate', 'reviewers with the same
     name as the director': two attributes the request names, compared with each other."""
     schema = g.schema
     linked = [c for c in columns if g.column_link.get(c.key, 0) >= 0.5 and not c.is_identifier
               and c.formula is None]
+    pairs: list[tuple[Column, Column]] = []
+    for role in (t for t in g.table_link if g.table_link[t] > 0 and schema.is_role(t)):
+        # 'employees who earn less than their manager': the same attribute of a record
+        # and of the record in that role.
+        base = schema.table(role).physical
+        for column in schema.tables[role].columns:
+            if (column.kind in (NUMBER, DATE) and not column.is_identifier) or (
+                    schema.is_key(column.key) and not column.primary_key):
+                pairs.append((schema.table(base).column(column.name), column))
     options: list[Option] = []
-    for i, a in enumerate(linked):
-        for b in linked[i + 1:]:
-            numeric = a.kind in (NUMBER, DATE) and b.kind == a.kind
-            text = a.kind == TEXT and b.kind == TEXT
-            if not (numeric or text) or a.key in schema.equivalents(b.key):
-                continue
-            paths = schema.shortest_paths(a.table, b.table, limit=1) if a.table != b.table else [[]]
-            if not paths or len(paths[0]) > 2:
-                continue
-            pa, pb = column_phrase(schema, a.key), column_phrase(schema, b.key)
-            ops = ((("<", "less than"), (">", "greater than"), ("=", "equal to")) if numeric
-                   else (("=", "the same as"), ("!=", "different from")))
-            for op, word in ops:
-                options.append(Option(f"x{len(options)}", f"the {pa} is {word} the {pb}",
-                                      Condition("columns", a.key, op, (b.key,))))
+    pairs += [(a, b) for i, a in enumerate(linked) for b in linked[i + 1:]]
+    for a, b in dict.fromkeys(pairs):
+        if schema.is_key(a.key):
+            # 'in the same store as their manager': references compare for equality only.
+            options += [Option(f"x{len(options)}", f"the {column_phrase(schema, a.key)} is {word} the "
+                               f"{column_phrase(schema, b.key)}", Condition("columns", a.key, op, (b.key,)))
+                        for op, word in (("=", "the same as"), ("!=", "different from"))]
+            continue
+        numeric = a.kind in (NUMBER, DATE) and b.kind == a.kind
+        text = a.kind == TEXT and b.kind == TEXT
+        if not (numeric or text) or a.key in schema.equivalents(b.key):
+            continue
+        paths = schema.shortest_paths(a.table, b.table, limit=1) if a.table != b.table else [[]]
+        if not paths or len(paths[0]) > 2:
+            continue
+        pa, pb = column_phrase(schema, a.key), column_phrase(schema, b.key)
+        ops = ((("<", "earlier than"), (">", "later than"), ("=", "the same as")) if a.kind == DATE
+               else (("<", "less than"), (">", "greater than"), ("=", "equal to")) if numeric
+               else (("=", "the same as"), ("!=", "different from")))
+        for op, word in ops:
+            options.append(Option(f"x{len(options)}", f"the {pa} is {word} the {pb}",
+                                  Condition("columns", a.key, op, (b.key,))))
     return options[:60]
-
-
-def _flag_values(values: tuple[str, ...]) -> tuple[str, str] | None:
-    """(true value, false value) when a column stores a two-valued flag."""
-    pairs = (("1", "0"), ("T", "F"), ("Y", "N"), ("yes", "no"), ("true", "false"), ("Yes", "No"),
-             ("TRUE", "FALSE"), ("y", "n"), ("t", "f"))
-    present = set(values)
-    for yes, no in pairs:
-        if present == {yes, no}:
-            return yes, no
-    return None
 
 
 def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) -> None:
@@ -472,7 +532,7 @@ def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) ->
         orders.append(Option(f"s{len(orders)}", text, payload))
 
     for table in _by_relevance(g, cands.tables):
-        if not schema.is_bridge(table):
+        if schema.countable(table):
             label = entity(schema, table)
             add(f"by how many {label} records each result has, most first",
                 Ordering("COUNT", None, table, True))
@@ -532,6 +592,15 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
         return rep_of.get(key, key)
 
     columns: list[Option] = []
+    if lit.kind == "period":
+        first, end, label = lit.value
+        keys = [k for k in classes if schema.column(k).kind == DATE and schema.column(k).formula is None]
+        keys.sort(key=lambda k: (-g.column_link.get(k, 0), -_table_relevance(g, k.split(".")[0])))
+        columns = [Option(f"c{i}", column_phrase(schema, k), (k, lit.value)) for i, k in enumerate(keys[:200])]
+        roles = [Option("value", f"a time period ({label}) that a date of the results must fall in, "
+                                 "before or after", "value"),
+                 Option("other", "not a condition on a date", None)]
+        return LiteralSlots(lit, roles, columns, dict(PERIOD_OPS), [], [], literal_context(g.question, lit))
     if lit.kind in ("text", "date"):
         stored: dict[str, Any] = {}
         for key, value in lit.alternatives:
@@ -585,7 +654,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
                                  "or a column name such as '200 meters')", None)]
         ops = NUMERIC_OPS
     count_tables = [Option(f"k{i}", f"how many {entity(schema, t)} records", t)
-                    for i, t in enumerate(t for t in _by_relevance(g, tables) if not schema.is_bridge(t))]
+                    for i, t in enumerate(t for t in _by_relevance(g, tables) if schema.countable(t))]
     group_funcs = [Option(f, w, f) for f, w in AGG_FUNCS]
     return LiteralSlots(lit, roles, columns, dict(ops), count_tables, group_funcs,
                         literal_context(g.question, lit))
@@ -632,8 +701,10 @@ def _state(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, Any
             if strategy.state_values and values and c.kind == TEXT and not c.is_identifier:
                 return f"{c.label} (e.g. {', '.join(repr(v) for v in values[:2])})"
             return c.label
-        state["database"] = {entity(schema, t): [label(c) for c in schema.tables[t].columns]
-                             for t in cands.tables}
+        state["database"] = {
+            entity(schema, t): (f"another {entity(schema, schema.tables[t].physical)} (same attributes)"
+                                if schema.is_role(t) else [label(c) for c in schema.tables[t].columns])
+            for t in cands.tables}
     if strategy.state_relations:
         state["relationships"] = [
             f"{entity(schema, fk.table)}.{schema.table(fk.table).column(fk.columns[0]).label} "
@@ -944,6 +1015,12 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             continue
         record(f"lop_{lit_id}", "literal operator", f"operator for {slots.context}",
                answers[f"lop_{lit_id}"], op)
+        if lit.kind == "period":
+            first, end, label = value
+            conditions.append(Condition("period", key, values=(first, end, label)) if op == "within" else
+                              Condition("compare", key, "<", (first,)) if op == "<" else
+                              Condition("compare", key, ">=", (end,)))
+            continue
         if lit.kind == "text":
             kind = "text" if op in ("contains", "starts", "ends", "not_contains") else "compare"
             condition = Condition(kind, key, op, (value,))
@@ -976,10 +1053,13 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         else:
             conditions.append(condition)
 
-    # -- implicit categorical values
+    # -- implicit categorical values (unless a literal already restricts that column)
+    restricted = {schema.canonical(c.column) for c in conditions + excluded + subset if c.column}
     for key, options in cands.categorical.items():
         answer = answers[f"cat_{key}"]
         if answer.choice == "none" or answer.top_probability < strategy.categorical_threshold:
+            continue
+        if schema.canonical(key) in restricted:
             continue
         option = _pick(options, answer)
         record(f"cat_{key}", "implicit value", option.text, answer, option.payload)
@@ -1032,6 +1112,9 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         limit = limit_option.payload
     if not order:
         limit = None
+    if limit == 1 and order and not order[0].is_aggregate and any(
+            c.kind == "vs_group" and c.op == "=" and c.func in ("MAX", "MIN") for c in conditions):
+        order, limit = (), None     # 'the most expensive product in each category': one per group
     if top_group is not None and not (order and order[0].is_aggregate):
         conditions.append(top_group)
     # 'distinct / different / unique' lists each value once (Spider train: ~95% of
@@ -1085,6 +1168,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
 
     conditions = _anti_joins(schema, conditions, subject)
     conditions = _dedupe_absent(schema, conditions, answers, cands, excluded)
+    conditions = _drop_redundant_absent(schema, conditions, subject)
     explicit = {(c.column, c.func) for c in conditions if c.kind == "having" and c.column}
     conditions = [c for c in conditions if not (c.kind == "having_vs" and (c.column, c.func) in explicit)]
     conditions, connector, both = _normalize_conditions(g, conditions, connector, subject, outputs)
@@ -1101,6 +1185,11 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     conditions = [c for c in conditions if not (c.kind == "related" and c.table in reachable)]
     aggregated = (any(o.is_aggregate for o in outputs) or any(o.is_aggregate for o in order)
                   or any(c.kind in ("having", "having_vs") for c in conditions))
+    limit_per: str | None = None
+    if (not aggregated and group_by and order and not order[0].is_aggregate and limit and limit > 1
+            and EACH_CUE.search(g.question)):
+        limit_per = group_by[0]  # 'the two cheapest products in each category': rank within groups
+        conditions = [c for c in conditions if not (c.kind == "vs_group" and c.op == "=")]
     if not aggregated:
         group_by = []          # "the name of each program" lists rows; it does not group them
     if group_by and any(c.kind == "compare" and c.op == "=" and c.column in schema.equivalents(group_by[0])
@@ -1144,10 +1233,22 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
 
     followup: dict[str, Question] = {}
     outputs = _resolve_count_sum(schema, outputs, group_by, answers, followup, record)
+    outputs, conditions = _percentage(g, outputs, conditions, subject, answers, followup, record)
+    keep_empty = bool(KEEP_EMPTY_CUE.search(g.question) and group_by and any(
+        o.func == "COUNT" and o.column is None for o in outputs))
+    if keep_empty:
+        # 'including customers with no orders': the groups come from the grouped entity.
+        canon = schema.canonical(group_by[0])
+        subject = canon.split(".")[0] if schema.column(canon).primary_key else subject
+        group_by = [canon]
+        if not any(o.column and o.column.split(".")[0] == subject and not o.is_aggregate for o in outputs):
+            label = _group_label(schema, canon, [], set())
+            outputs = [OutputItem(None, label)] + [o for o in outputs if o.is_aggregate] if label else outputs
     intent = Intent(outputs=tuple(outputs), conditions=tuple(conditions), connector=connector,
                     group_by=tuple(group_by), order=order, limit=limit, offset=offset,
                     distinct=distinct and not group_by, both=both, subject=subject,
-                    excluded=tuple(excluded), join_choices=tuple(join_choices))
+                    excluded=tuple(excluded), join_choices=tuple(join_choices),
+                    keep_empty=keep_empty, limit_per=limit_per)
     intent = rebind_equivalents(schema, intent)
     intent = _choose_routes(g, intent, answers, followup, record)
     return Interpretation(intent, record.decisions, record.uncertain, followup=followup or None)
@@ -1166,6 +1267,25 @@ def _anti_joins(schema: Schema, conditions: list[Condition], subject: str | None
             out.append(Condition("absent", None, table=table, inner=(_positive(c),)))
         else:
             out.append(c)
+    return out
+
+
+def _drop_redundant_absent(schema: Schema, conditions: list[Condition],
+                           subject: str | None) -> list[Condition]:
+    """'employees with no manager': a missing reference column already says there is no
+    related record; the anti-join through that same column adds nothing."""
+    missing = {c.column for c in conditions if c.kind == "null" and not c.negated and c.column}
+    if not missing or subject is None:
+        return conditions
+    out = []
+    for c in conditions:
+        if c.kind == "absent" and not c.inner and c.table:
+            paths = schema.shortest_paths(subject, c.table, limit=1)
+            step = paths[0][0] if paths and paths[0] else None
+            if step and step.fk.table == subject and any(
+                    f"{subject}.{col}" in missing for col in step.fk.columns):
+                continue
+        out.append(c)
     return out
 
 
@@ -1250,6 +1370,39 @@ def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, An
                   if c.kind == "having" and c.table == subject and not c.column else c
                   for c in conditions]
     return order, conditions, outputs
+
+
+def _percentage(g: Grounding, outputs: list[OutputItem], conditions: list[Condition],
+                subject: str | None, answers: dict[str, Answer], followup: dict[str, Question],
+                record: _Recorder) -> tuple[list[OutputItem], list[Condition]]:
+    """'What percentage of orders were cancelled?': one condition defines the counted part,
+    the others (if any) the whole.  Which one is a semantic choice: ask it."""
+    if not PCT_CUE.search(g.question):
+        return outputs, conditions
+    candidates = [c for c in conditions if c.kind in ("compare", "text", "in_values", "null", "between",
+                                                     "period")]
+    counts = [o for o in outputs if o.func == "COUNT" and o.column is None and not o.per]
+    if not candidates or len(counts) > 1:
+        return outputs, conditions
+    from intentsql.render import condition as render_condition
+    key = "share"
+    options = {f"c{i}": "the records " + render_condition(g.schema, c, subject).removeprefix("whose ")
+               .removeprefix("that ") for i, c in enumerate(candidates)}
+    if key not in answers:
+        followup[key] = choice(
+            "`request` asks for a percentage (share) of records. Which records make up that share?",
+            {**options, "none": "no percentage or share is asked for"})
+        return outputs, conditions
+    answer = answers[key]
+    record(key, "percentage", "share of records", answer, answer.choice, {**options, "none": "none"})
+    if answer.choice == "none":
+        return outputs, conditions
+    chosen = candidates[int(answer.choice[1:])]
+    table = counts[0].table if counts else chosen.column.split(".")[0] if chosen.column else subject
+    share = OutputItem("PCT", None, table, where=(chosen,))
+    rest = [o for o in outputs if o not in counts]
+    return ([share] + [o for o in rest if not o.is_aggregate or o.per] if not counts else
+            [share if o in counts else o for o in outputs]), [c for c in conditions if c is not chosen]
 
 
 def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list[str],
@@ -1352,22 +1505,20 @@ def _ungrouped(schema: Schema, item: OutputItem, group_by: list[str]) -> bool:
 
 def _group_label(schema: Schema, key: str, outputs: list[OutputItem],
                  condition_tables: set[str] | None = None) -> str | None:
-    """How to show a group: its key, or the entity's name when grouping by an id of a
-    table that has a name column (without adding a join just to show a label)."""
+    """How to show a group keyed by an identifier: the name of the record it identifies.
+
+    'products per supplier' groups by products.supplier_id, which identifies a supplier:
+    show the supplier's name (joining suppliers), never a product column."""
     column = schema.column(key)
     if not column.is_identifier:
         return key
-    entity = schema.table(column.table)
-    if any(o.column and o.column.split(".")[0] == entity.name and not o.is_aggregate for o in outputs):
+    canon = schema.canonical(key)
+    owner = schema.table(canon.split(".")[0] if schema.column(canon).primary_key else column.table)
+    if any(o.column and o.column.split(".")[0] == owner.name and not o.is_aggregate for o in outputs):
         return None   # the entity is already shown through one of its attributes
-    needed = {t for o in outputs for t in o.tables} | (condition_tables or set())
-    for member in schema.equivalents(key):
-        table = schema.table(member.split(".")[0])
-        if table.name != entity.name and table.name not in needed:
-            continue
-        for col in table.columns:
-            if col.kind == TEXT and re.search(r"\b(name|title)\b", col.label):
-                return col.key
+    for col in owner.columns:
+        if col.kind == TEXT and re.search(r"\b(name|title)\b", col.label):
+            return col.key
     return key
 
 
@@ -1384,7 +1535,7 @@ def _prefer_named_tables(g: Grounding, outputs: list[OutputItem]) -> list[Output
                      for c in schema.table(t).columns if c.label == label]
             if len(named) == 1 and not any(t in chosen_tables and g.table_link.get(t, 0) > 0
                                            for t in chosen_tables):
-                item = OutputItem(item.func, named[0], item.table, item.distinct)
+                item = replace(item, column=named[0])
         result.append(item)
     return result
 
@@ -1584,7 +1735,7 @@ def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
 
     outputs_list: list[OutputItem] = []
     for o in intent.outputs:
-        item = OutputItem(o.func, m(o.column), o.table, o.distinct, o.star)
+        item = replace(o, column=m(o.column), where=tuple(replace(c, column=m(c.column)) for c in o.where))
         if item in outputs_list or (item.column and not item.func and any(
                 x.column and not x.func and x.column in schema.equivalents(item.column)
                 for x in outputs_list)):

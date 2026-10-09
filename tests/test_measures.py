@@ -76,5 +76,38 @@ class MeasureTest(unittest.TestCase):
         self.assertIn("JULIANDAY", result.sql)
 
 
+class SelfReferenceTest(unittest.TestCase):
+    """employees.manager_id (undeclared) is a self-reference: the manager is a role table."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.shop = make_shop(cls.tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_role_table_is_inferred(self):
+        schema = load_schema(self.shop)
+        roles = [t for t in schema.tables.values() if t.role_of]
+        self.assertEqual([(t.role_of, t.label) for t in roles], [("employees", "manager employees")])
+        self.assertNotIn(roles[0].name, [t["name"] for t in schema.describe()["tables"]])
+
+    def test_compare_with_manager(self):
+        result = answer(self.shop, "Which employees earn less than their manager?", client=ScriptedJev([
+            ("^out_", "show the employee name in", "itself"),
+            ("^colcmp$", "", "^the employee salary is less than the manager employee salary")]))
+        self.assertEqual(result.status, ANSWERED, result.message)
+        self.assertEqual(rows(result), [("Val",), ("Wim",), ("Yan",)])
+        self.assertEqual(result.sql.count("FROM employees AS") + result.sql.count("JOIN employees AS"), 2)
+
+    def test_show_manager_name(self):
+        result = answer(self.shop, "List each employee's name with the name of their manager.",
+                        client=ScriptedJev([("^out_", "show the (manager )?employee name in", "itself")]))
+        self.assertEqual(result.status, ANSWERED, result.message)
+        self.assertEqual(rows(result), [("Val", "Xia"), ("Wim", "Xia"), ("Yan", "Zoe")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
+import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 from intentsql.grounding import extract_literals, ground
 from intentsql.intent import column_phrase, entity
@@ -23,7 +25,7 @@ class TextTest(unittest.TestCase):
 
     def test_tokenize_keeps_offsets(self):
         tokens = tokenize("Ann's 3.5 cups")
-        self.assertEqual([t.text for t in tokens], ["Ann's", "3.5", "cups"])
+        self.assertEqual([t.text for t in tokens], ["Ann", "3.5", "cups"])   # possessive split off
         self.assertEqual(tokens[1].start, 6)
 
 
@@ -68,6 +70,17 @@ class LiteralTest(unittest.TestCase):
     def test_letters_and_one_as_pronoun(self):
         self.assertEqual(self.literals("names ending with the letter m")[0][1], "m")
         self.assertEqual(self.literals("the one with the highest price"), [])
+
+    def test_possessives(self):
+        g = ground("List each employee's name and salary.", self.schema)
+        self.assertEqual(g.table_link["employees"], 1.0)        # "employee's" names the table
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p.sqlite"
+            with sqlite3.connect(path) as conn:
+                conn.executescript("CREATE TABLE shop (id INTEGER PRIMARY KEY, name TEXT);"
+                                   "INSERT INTO shop VALUES (1, 'McDonald''s'), (2, 'Wendy');")
+            found = extract_literals("Where is McDonald's located?", load_schema(path))
+            self.assertEqual([(lit.text, lit.value) for lit in found], [("McDonald's", "McDonald's")])
 
     def test_grounding_links_and_positions(self):
         g = ground("What is the price of products in the coffee category?", self.schema)

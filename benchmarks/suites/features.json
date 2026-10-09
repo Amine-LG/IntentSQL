@@ -1,0 +1,688 @@
+{
+ "suite": "features",
+ "description": "One or more requests per supported SQL capability (development suite).",
+ "cases": [
+  {
+   "id": "f-proj-1",
+   "database": "retail.sqlite",
+   "question": "List every store with its city.",
+   "gold_sql": [
+    "SELECT name, city FROM stores"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "projection",
+   "group": null
+  },
+  {
+   "id": "f-cmp-1",
+   "database": "retail.sqlite",
+   "question": "Which products cost more than 100?",
+   "gold_sql": [
+    "SELECT name FROM products WHERE price > 100"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "comparison",
+   "group": null
+  },
+  {
+   "id": "f-cmp-2",
+   "database": "retail.sqlite",
+   "question": "Which products cost at most 2.5?",
+   "gold_sql": [
+    "SELECT name FROM products WHERE price <= 2.5"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "comparison",
+   "group": null
+  },
+  {
+   "id": "f-bool-1",
+   "database": "retail.sqlite",
+   "question": "Which gold-tier customers live in Paris or Lyon?",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE city IN ('Paris', 'Lyon') AND loyalty_tier = 'gold'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "boolean",
+   "group": null
+  },
+  {
+   "id": "f-bool-2",
+   "database": "retail.sqlite",
+   "question": "List products that are discontinued or cost more than 100.",
+   "gold_sql": [
+    "SELECT name FROM products WHERE discontinued = 1 OR price > 100"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "boolean",
+   "group": null
+  },
+  {
+   "id": "f-in-1",
+   "database": "retail.sqlite",
+   "question": "How many orders are pending or returned?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM orders WHERE status IN ('pending', 'returned')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "in_list",
+   "group": null
+  },
+  {
+   "id": "f-between-1",
+   "database": "retail.sqlite",
+   "question": "Which products are priced between 3 and 4?",
+   "gold_sql": [
+    "SELECT name FROM products WHERE price BETWEEN 3 AND 4"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "between",
+   "group": null
+  },
+  {
+   "id": "f-like-1",
+   "database": "retail.sqlite",
+   "question": "Which products have 'Blend' in their name?",
+   "gold_sql": [
+    "SELECT name FROM products WHERE name LIKE '%Blend%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "text_match",
+   "group": null
+  },
+  {
+   "id": "f-like-2",
+   "database": "retail.sqlite",
+   "question": "Which suppliers' names start with K?",
+   "gold_sql": [
+    "SELECT name FROM suppliers WHERE name LIKE 'K%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "text_match",
+   "group": null
+  },
+  {
+   "id": "f-null-1",
+   "database": "retail.sqlite",
+   "question": "How many customers have no email address?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM customers WHERE email IS NULL"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nulls",
+   "group": null
+  },
+  {
+   "id": "f-distinct-1",
+   "database": "retail.sqlite",
+   "question": "Which different cities do our customers live in?",
+   "gold_sql": [
+    "SELECT DISTINCT city FROM customers"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "distinct",
+   "group": null
+  },
+  {
+   "id": "f-order-1",
+   "database": "retail.sqlite",
+   "question": "List the departments from the largest budget to the smallest.",
+   "gold_sql": [
+    "SELECT name FROM departments ORDER BY budget DESC",
+    "SELECT name, budget FROM departments ORDER BY budget DESC"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "ordering",
+   "group": null
+  },
+  {
+   "id": "f-limit-1",
+   "database": "retail.sqlite",
+   "question": "What are the three most expensive products?",
+   "gold_sql": [
+    "SELECT name FROM products ORDER BY price DESC LIMIT 3",
+    "SELECT name, price FROM products ORDER BY price DESC LIMIT 3"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "ordering",
+   "group": null
+  },
+  {
+   "id": "f-offset-1",
+   "database": "retail.sqlite",
+   "question": "Which product has the second highest price?",
+   "gold_sql": [
+    "SELECT name FROM products ORDER BY price DESC LIMIT 1 OFFSET 1",
+    "SELECT name, price FROM products ORDER BY price DESC LIMIT 1 OFFSET 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "ordering",
+   "group": null
+  },
+  {
+   "id": "f-join-1",
+   "database": "retail.sqlite",
+   "question": "List each product with the country of its supplier.",
+   "gold_sql": [
+    "SELECT T1.name, T2.country FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "join",
+   "group": null
+  },
+  {
+   "id": "f-join-2",
+   "database": "retail.sqlite",
+   "question": "Which regions have stores that sold Croissants?",
+   "gold_sql": [
+    "SELECT DISTINCT T5.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN orders T3 ON T1.order_id = T3.id JOIN stores T4 ON T3.store_id = T4.id JOIN regions T5 ON T4.region_id = T5.id WHERE T2.name = 'Croissant'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "multi_join",
+   "group": null
+  },
+  {
+   "id": "f-self-1",
+   "database": "retail.sqlite",
+   "question": "Which employees work in the same store as their manager?",
+   "gold_sql": [
+    "SELECT T1.name FROM employees T1 JOIN employees T2 ON T1.manager_id = T2.id WHERE T1.store_id = T2.store_id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "self_join",
+   "group": null
+  },
+  {
+   "id": "f-self-2",
+   "database": "retail.sqlite",
+   "question": "List each employee together with the name of their manager.",
+   "gold_sql": [
+    "SELECT T1.name, T2.name FROM employees T1 JOIN employees T2 ON T1.manager_id = T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "self_join",
+   "group": null
+  },
+  {
+   "id": "f-self-3",
+   "database": "retail.sqlite",
+   "question": "Which employees were hired before their manager?",
+   "gold_sql": [
+    "SELECT T1.name FROM employees T1 JOIN employees T2 ON T1.manager_id = T2.id WHERE T1.hire_date < T2.hire_date"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "self_join",
+   "group": null
+  },
+  {
+   "id": "f-left-1",
+   "database": "retail.sqlite",
+   "question": "How many orders does each customer have, including customers with no orders?",
+   "gold_sql": [
+    "SELECT T1.name, COUNT(T2.id) FROM customers T1 LEFT JOIN orders T2 ON T2.customer_id = T1.id GROUP BY T1.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "outer_join",
+   "group": null
+  },
+  {
+   "id": "f-agg-1",
+   "database": "retail.sqlite",
+   "question": "What is the average salary in each department?",
+   "gold_sql": [
+    "SELECT T2.name, AVG(T1.salary) FROM employees T1 JOIN departments T2 ON T1.department_id = T2.id GROUP BY T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "aggregate",
+   "group": null
+  },
+  {
+   "id": "f-having-1",
+   "database": "retail.sqlite",
+   "question": "Which departments have an average salary above 5000?",
+   "gold_sql": [
+    "SELECT T2.name FROM employees T1 JOIN departments T2 ON T1.department_id = T2.id GROUP BY T2.id HAVING AVG(T1.salary) > 5000"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "having",
+   "group": null
+  },
+  {
+   "id": "f-cntd-1",
+   "database": "retail.sqlite",
+   "question": "How many different customers placed an order in March 2024?",
+   "gold_sql": [
+    "SELECT COUNT(DISTINCT customer_id) FROM orders WHERE order_date LIKE '2024-03%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "count_distinct",
+   "group": null
+  },
+  {
+   "id": "f-nest-1",
+   "database": "retail.sqlite",
+   "question": "What is the average number of orders per customer?",
+   "gold_sql": [
+    "SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM customers) FROM orders",
+    "SELECT AVG(n) FROM (SELECT COUNT(*) AS n FROM orders GROUP BY customer_id)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nested_aggregate",
+   "group": null
+  },
+  {
+   "id": "f-nest-2",
+   "database": "retail.sqlite",
+   "question": "What is the average order value?",
+   "gold_sql": [
+    "SELECT AVG(v) FROM (SELECT SUM(T1.quantity * T1.unit_price) AS v FROM order_items T1 GROUP BY T1.order_id)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nested_aggregate",
+   "group": null
+  },
+  {
+   "id": "f-nest-3",
+   "database": "retail.sqlite",
+   "question": "Which customers placed more orders than the average customer?",
+   "gold_sql": [
+    "SELECT T1.name FROM customers T1 JOIN orders T2 ON T2.customer_id = T1.id GROUP BY T1.id HAVING COUNT(*) > (SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM customers) FROM orders)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "nested_aggregate",
+   "group": null
+  },
+  {
+   "id": "f-pct-1",
+   "database": "retail.sqlite",
+   "question": "What percentage of orders were cancelled?",
+   "gold_sql": [
+    "SELECT 100.0 * SUM(status = 'cancelled') / COUNT(*) FROM orders"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "percentage",
+   "group": null
+  },
+  {
+   "id": "f-expr-1",
+   "database": "retail.sqlite",
+   "question": "What is the total revenue of each category?",
+   "gold_sql": [
+    "SELECT T3.name, SUM(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "f-expr-2",
+   "database": "retail.sqlite",
+   "question": "Which product generated the most revenue?",
+   "gold_sql": [
+    "SELECT T2.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 1",
+    "SELECT T2.name, SUM(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "f-expr-3",
+   "database": "retail.sqlite",
+   "question": "Who are the top 3 customers by total spending?",
+   "gold_sql": [
+    "SELECT T3.name FROM order_items T1 JOIN orders T2 ON T1.order_id = T2.id JOIN customers T3 ON T2.customer_id = T3.id GROUP BY T3.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 3",
+    "SELECT T3.name, SUM(T1.quantity * T1.unit_price) FROM order_items T1 JOIN orders T2 ON T1.order_id = T2.id JOIN customers T3 ON T2.customer_id = T3.id GROUP BY T3.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 3"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "f-expr-4",
+   "database": "retail.sqlite",
+   "question": "How much budget does each department have left after paying salaries?",
+   "gold_sql": [
+    "SELECT T2.name, T2.budget - SUM(T1.salary) FROM employees T1 JOIN departments T2 ON T1.department_id = T2.id GROUP BY T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "arithmetic",
+   "group": null
+  },
+  {
+   "id": "f-anti-1",
+   "database": "retail.sqlite",
+   "question": "Which suppliers have no discontinued products?",
+   "gold_sql": [
+    "SELECT name FROM suppliers WHERE id NOT IN (SELECT supplier_id FROM products WHERE discontinued = 1)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "not_exists",
+   "group": null
+  },
+  {
+   "id": "f-anti-2",
+   "database": "retail.sqlite",
+   "question": "Which customers have never placed a cancelled order?",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders WHERE status = 'cancelled')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "not_exists",
+   "group": null
+  },
+  {
+   "id": "f-semi-1",
+   "database": "retail.sqlite",
+   "question": "Which customers bought products from Japanese suppliers?",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE id IN (SELECT T2.customer_id FROM order_items T1 JOIN orders T2 ON T1.order_id = T2.id JOIN products T3 ON T1.product_id = T3.id JOIN suppliers T4 ON T3.supplier_id = T4.id WHERE T4.country = 'Japan')"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "in_subquery",
+   "group": null
+  },
+  {
+   "id": "f-scalar-1",
+   "database": "retail.sqlite",
+   "question": "Which products cost more than the average product?",
+   "gold_sql": [
+    "SELECT name FROM products WHERE price > (SELECT AVG(price) FROM products)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "scalar_subquery",
+   "group": null
+  },
+  {
+   "id": "f-corr-1",
+   "database": "retail.sqlite",
+   "question": "Which employees earn more than the average salary of their department?",
+   "gold_sql": [
+    "SELECT T1.name FROM employees T1 WHERE T1.salary > (SELECT AVG(T2.salary) FROM employees T2 WHERE T2.department_id = T1.department_id)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "correlated",
+   "group": null
+  },
+  {
+   "id": "f-set-1",
+   "database": "retail.sqlite",
+   "question": "Which stores have both cancelled and returned orders?",
+   "gold_sql": [
+    "SELECT T2.name FROM orders T1 JOIN stores T2 ON T1.store_id = T2.id WHERE T1.status = 'cancelled' INTERSECT SELECT T2.name FROM orders T1 JOIN stores T2 ON T1.store_id = T2.id WHERE T1.status = 'returned'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "set_operation",
+   "group": null
+  },
+  {
+   "id": "f-set-2",
+   "database": "retail.sqlite",
+   "question": "Which supplier countries supply both coffee and tea products?",
+   "gold_sql": [
+    "SELECT T2.country FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id JOIN categories T3 ON T1.category_id = T3.id WHERE T3.name = 'Coffee' INTERSECT SELECT T2.country FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id JOIN categories T3 ON T1.category_id = T3.id WHERE T3.name = 'Tea'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "set_operation",
+   "group": null
+  },
+  {
+   "id": "f-topg-1",
+   "database": "retail.sqlite",
+   "question": "What is the most expensive product in each category?",
+   "gold_sql": [
+    "SELECT T1.name FROM products T1 WHERE T1.price = (SELECT MAX(T2.price) FROM products T2 WHERE T2.category_id = T1.category_id)",
+    "SELECT T2.name, T1.name FROM products T1 JOIN categories T2 ON T1.category_id = T2.id WHERE T1.price = (SELECT MAX(T3.price) FROM products T3 WHERE T3.category_id = T1.category_id)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "top_per_group",
+   "group": null
+  },
+  {
+   "id": "f-topn-1",
+   "database": "retail.sqlite",
+   "question": "List the two cheapest products in each category.",
+   "gold_sql": [
+    "SELECT name FROM (SELECT name, ROW_NUMBER() OVER (PARTITION BY category_id ORDER BY price) AS r FROM products) WHERE r <= 2"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "top_per_group",
+   "group": null
+  },
+  {
+   "id": "f-always-1",
+   "database": "retail.sqlite",
+   "question": "Which categories have only products priced under 20?",
+   "gold_sql": [
+    "SELECT name FROM categories WHERE id NOT IN (SELECT category_id FROM products WHERE price >= 20)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "universal",
+   "group": null
+  },
+  {
+   "id": "f-year-1",
+   "database": "retail.sqlite",
+   "question": "How many orders were placed in 2024?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM orders WHERE order_date LIKE '2024%'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_part",
+   "group": null
+  },
+  {
+   "id": "f-year-2",
+   "database": "retail.sqlite",
+   "question": "How many customers signed up after 2022?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM customers WHERE STRFTIME('%Y', signup_date) > '2022'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_part",
+   "group": null
+  },
+  {
+   "id": "f-month-1",
+   "database": "retail.sqlite",
+   "question": "How many orders were placed in each month?",
+   "gold_sql": [
+    "SELECT STRFTIME('%Y-%m', order_date), COUNT(*) FROM orders GROUP BY 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_part",
+   "group": null
+  },
+  {
+   "id": "f-month-2",
+   "database": "retail.sqlite",
+   "question": "Which month had the most orders?",
+   "gold_sql": [
+    "SELECT STRFTIME('%Y-%m', order_date) FROM orders GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1",
+    "SELECT STRFTIME('%Y-%m', order_date), COUNT(*) FROM orders GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_part",
+   "group": null
+  },
+  {
+   "id": "f-range-1",
+   "database": "retail.sqlite",
+   "question": "How many orders were placed in the first quarter of 2024?",
+   "gold_sql": [
+    "SELECT COUNT(*) FROM orders WHERE order_date BETWEEN '2024-01-01' AND '2024-03-31'"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_range",
+   "group": null
+  },
+  {
+   "id": "f-dur-1",
+   "database": "retail.sqlite",
+   "question": "How many years had each employee worked by the end of 2024? Show their names.",
+   "gold_sql": [
+    "SELECT name, (JULIANDAY('2024-12-31') - JULIANDAY(hire_date)) / 365.25 FROM employees"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "date_arithmetic",
+   "group": null
+  },
+  {
+   "id": "f-para-1",
+   "database": "retail.sqlite",
+   "question": "How many products does each supplier provide?",
+   "gold_sql": [
+    "SELECT T2.name, COUNT(*) FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id GROUP BY T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-supplier-count"
+  },
+  {
+   "id": "f-para-2",
+   "database": "retail.sqlite",
+   "question": "For every supplier, count its products.",
+   "gold_sql": [
+    "SELECT T2.name, COUNT(*) FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id GROUP BY T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-supplier-count"
+  },
+  {
+   "id": "f-para-3",
+   "database": "retail.sqlite",
+   "question": "Number of products per vendor?",
+   "gold_sql": [
+    "SELECT T2.name, COUNT(*) FROM products T1 JOIN suppliers T2 ON T1.supplier_id = T2.id GROUP BY T2.id"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-supplier-count"
+  },
+  {
+   "id": "f-para-4",
+   "database": "retail.sqlite",
+   "question": "Which customers have not ordered anything?",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-no-orders"
+  },
+  {
+   "id": "f-para-5",
+   "database": "retail.sqlite",
+   "question": "List customers without any orders.",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-no-orders"
+  },
+  {
+   "id": "f-para-6",
+   "database": "retail.sqlite",
+   "question": "Who are the customers that never placed an order?",
+   "gold_sql": [
+    "SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "paraphrase",
+   "group": "P-no-orders"
+  },
+  {
+   "id": "f-sem-1",
+   "database": "retail.sqlite",
+   "question": "Top 3 products by revenue",
+   "gold_sql": [
+    "SELECT T2.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 3",
+    "SELECT T2.name, SUM(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY SUM(T1.quantity * T1.unit_price) DESC LIMIT 3"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "f-sem-2",
+   "database": "retail.sqlite",
+   "question": "Top 3 products by number of orders",
+   "gold_sql": [
+    "SELECT T2.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY COUNT(*) DESC LIMIT 3",
+    "SELECT T2.name, COUNT(*) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id GROUP BY T2.id ORDER BY COUNT(*) DESC LIMIT 3"
+   ],
+   "ordered": true,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  },
+  {
+   "id": "f-sem-3",
+   "database": "retail.sqlite",
+   "question": "What is the average order line value?",
+   "gold_sql": [
+    "SELECT AVG(T1.quantity * T1.unit_price) FROM order_items T1"
+   ],
+   "ordered": false,
+   "expect": "answer",
+   "category": "semantic",
+   "group": null
+  }
+ ]
+}

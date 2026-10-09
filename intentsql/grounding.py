@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from datetime import date, timedelta
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +37,7 @@ class Literal:
     id: str
     text: str                      # surface text in the request
     value: Any                     # number, or canonical stored text
-    kind: str                      # "number" | "text" | "date"
+    kind: str                      # "number" | "text" | "date" | "period" (value: first day, day after, label)
     start: int
     end: int
     columns: tuple[str, ...] = ()  # column keys known to store this value
@@ -205,6 +206,10 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             v for k, v in _MONTHS.items() if k.startswith(month.lower()[:3]))
         iso = f"{int(year):04d}-{number:02d}-{int(day):02d}"
         add(match.group(0), iso, "date", match.start(), match.end())
+    # 1d. Periods: 'March 2024', 'the first quarter of 2024', 'the last 30 days'.
+    for start, end, text, value in periods(question):
+        if free(start, end):
+            add(text, value, "period", start, end)
     for match in _LETTER.finditer(question):
         if free(match.start(1), match.end(1)):
             add(match.group(1), match.group(1), "text", match.start(1), match.end(1))
@@ -217,6 +222,12 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             surface = question[start:end]
             norm = _normalize(surface)
             matches = index.exact.get(norm)
+            if not matches and question[end:end + 2] in ("'s", "’s"):
+                # A stored value with a possessive ("McDonald's"): the tokenizer splits it off.
+                matches = index.exact.get(_normalize(question[start:end + 2]))
+                if matches:
+                    end += 2
+                    surface = question[start:end]
             if not matches and norm.endswith("s") and len(norm) > 3:
                 # 'goalies' for a stored 'goalie', 'countries' for 'country'.
                 for singular in _singulars(norm):
@@ -290,6 +301,77 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
     return [Literal(f"L{i + 1}", *(_fields(lit)[1:])) for i, lit in enumerate(found)]
 
 
+_MONTH_YEAR = re.compile(rf"\b{_MONTH_RE}\s+(?:of\s+)?(\d{{4}})\b", re.I)
+_QUARTER = re.compile(r"\b(?:the\s+)?(first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\s+(?:of\s+)?(\d{4})\b|"
+                      r"\bQ([1-4])\s*(?:of\s+)?(\d{4})\b", re.I)
+_HALF = re.compile(r"\b(?:the\s+)?(first|second|1st|2nd)\s+half\s+(?:of\s+)?(\d{4})\b", re.I)
+_RELATIVE = re.compile(
+    r"\b(?:in\s+)?(?:the\s+)?(?:(?:last|past|previous)\s+(?P<n>\d+|two|three|four|five|six|seven|ten|twelve|"
+    r"thirty)\s+(?P<unit>days?|weeks?|months?|years?)|past\s+(?P<punit>day|week|month|year))\b|"
+    r"\b(?P<which>this|last|current|previous)\s+(?P<cal>week|month|year)\b|\b(?P<day>today|yesterday)\b", re.I)
+_ORDINAL_INDEX = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
+
+
+def _add_months(day: date, months: int) -> date:
+    month = day.month - 1 + months
+    return date(day.year + month // 12, month % 12 + 1, 1)
+
+
+def periods(question: str, today: date | None = None) -> list[tuple[int, int, str, tuple[str, str, str]]]:
+    """Date periods as half-open ranges: (start, end, surface, (first day, day after, label)).
+
+    Relative periods are resolved against today's date and say so in their label, so
+    the interpretation shown to the user states which dates were used.
+    """
+    today = today or date.today()
+    found = []
+    for m in _QUARTER.finditer(question):
+        q = _ORDINAL_INDEX.get((m.group(1) or "").lower()) or int(m.group(3))
+        year = int(m.group(2) or m.group(4))
+        first = date(year, 3 * (q - 1) + 1, 1)
+        found.append((m.start(), m.end(), m.group(0), (first, _add_months(first, 3), f"Q{q} {year}")))
+    for m in _HALF.finditer(question):
+        h = _ORDINAL_INDEX[m.group(1).lower()]
+        first = date(int(m.group(2)), 6 * (h - 1) + 1, 1)
+        found.append((m.start(), m.end(), m.group(0), (first, _add_months(first, 6),
+                                                       f"the {'first' if h == 1 else 'second'} half of {first.year}")))
+    for m in _MONTH_YEAR.finditer(question):
+        name = m.group(1).lower().rstrip(".")
+        number = _MONTHS.get(name) or next(v for k, v in _MONTHS.items() if k.startswith(name[:3]))
+        first = date(int(m.group(2)), number, 1)
+        found.append((m.start(), m.end(), m.group(0), (first, _add_months(first, 1), first.strftime("%B %Y"))))
+    for m in _RELATIVE.finditer(question):
+        if m.group("day"):
+            first = today if m.group("day").lower() == "today" else today - timedelta(days=1)
+            end = first + timedelta(days=1)
+            label = m.group("day").lower()
+        elif m.group("which"):
+            which, unit = m.group("which").lower(), m.group("cal").lower()
+            back = which in ("last", "previous")
+            if unit == "year":
+                first = date(today.year - back, 1, 1)
+                end = date(first.year + 1, 1, 1)
+            elif unit == "month":
+                first = _add_months(date(today.year, today.month, 1), -back)
+                end = _add_months(first, 1)
+            else:
+                monday = today - timedelta(days=today.weekday())
+                first = monday - timedelta(days=7 * back)
+                end = first + timedelta(days=7)
+            label = f"{which} {unit}"
+        else:
+            count_text = (m.group("n") or "1").lower()
+            count = int(count_text) if count_text.isdigit() else NUMBER_WORDS.get(count_text, 1)
+            unit = (m.group("unit") or m.group("punit")).lower().rstrip("s")
+            days = {"day": 1, "week": 7, "month": 30, "year": 365}[unit] * count
+            first, end = today - timedelta(days=days), today + timedelta(days=1)
+            label = f"the last {count} {unit}s" if count != 1 else f"the past {unit}"
+        found.append((m.start(), m.end(), m.group(0),
+                      (first, end, f"{label} (relative to today, {today.isoformat()})")))
+    return [(a, b, text, (first.isoformat(), end.isoformat(), label))
+            for a, b, text, (first, end, label) in found]
+
+
 def _fields(lit: Literal) -> tuple:
     return (lit.id, lit.text, lit.value, lit.kind, lit.start, lit.end, lit.columns, lit.exact,
             lit.quoted, lit.alternatives)
@@ -325,6 +407,41 @@ def _names_schema(surface: str, schema_words: set[str]) -> bool:
     return all(w in schema_words or w in STOPWORDS for w in words)
 
 
+DEMONYMS = {
+    "french": "france", "spanish": "spain", "dutch": "netherlands", "british": "uk", "english": "england",
+    "swiss": "switzerland", "greek": "greece", "turkish": "turkey", "polish": "poland",
+    "danish": "denmark", "swedish": "sweden", "finnish": "finland", "irish": "ireland",
+    "welsh": "wales", "scottish": "scotland", "american": "usa", "norwegian": "norway",
+    "portuguese": "portugal", "belgian": "belgium", "thai": "thailand", "filipino": "philippines",
+}
+
+
+def _demonym(index: ValueIndex, norm: str) -> list[tuple[str, str]]:
+    """'Japanese' -> 'Japan', 'German' -> 'Germany', 'French' -> 'France'."""
+    country = DEMONYMS.get(norm)
+    if country:
+        for value in (country, {"usa": "united states", "uk": "united kingdom"}.get(country, "")):
+            if value in index.exact:
+                return list(index.exact[value])
+    out: list[tuple[str, str]] = []
+    for value, matches in index.exact.items():
+        if " " in value or len(value) < 4:
+            continue
+        shorter = min(len(value), len(norm))
+        prefix = len(_common_prefix(value, norm))
+        if prefix >= 4 and prefix >= 0.8 * shorter and abs(len(value) - len(norm)) <= 4 and (
+                norm.endswith(("ese", "ian", "an", "ish", "i")) or value.endswith(("y", "a"))):
+            out.extend(matches)
+    return out[:6]
+
+
+def _common_prefix(a: str, b: str) -> str:
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    return a[:i]
+
+
 def _fuzzy(index: ValueIndex, surface: str) -> list[tuple[str, str]]:
     norm = _normalize(surface)
     if len(norm) < 4:
@@ -334,6 +451,8 @@ def _fuzzy(index: ValueIndex, surface: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for value in close:
         out.extend(index.exact[value])
+    if not out and " " not in norm:
+        out = _demonym(index, norm)
     if not out:
         # Containment: "Anguilla" for stored "Anguilla (UK)" style values.
         contained = [v for v in pool if norm in v.split(" (")[0]][:3]

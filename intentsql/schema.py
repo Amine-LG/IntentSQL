@@ -7,12 +7,13 @@ identifier; it only selects among objects built by this module.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 import threading
 from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
@@ -89,6 +90,11 @@ class Table:
     columns: tuple[Column, ...]
     primary_key: tuple[str, ...]
     row_count: int
+    role_of: str | None = None        # a role instance of this physical table (see _role_tables)
+
+    @property
+    def physical(self) -> str:
+        return self.role_of or self.name
 
     def column(self, name: str) -> Column:
         for column in self.columns:
@@ -137,8 +143,7 @@ class Schema:
         tables = dict(self.tables)
         for column in extra:
             table = tables[column.table]
-            tables[column.table] = Table(table.name, table.label, table.columns + (column,),
-                                         table.primary_key, table.row_count)
+            tables[column.table] = replace(table, columns=table.columns + (column,))
         return Schema(self.path, tables, self.foreign_keys, self.values)
 
     def requires(self, key: str) -> tuple[str, ...]:
@@ -165,7 +170,7 @@ class Schema:
         """Undeclared links between same-named, same-kind columns of otherwise
         unconnected tables (used only when no declared path exists)."""
         edges = []
-        names = list(self.tables)
+        names = [n for n in self.tables if self.tables[n].role_of is None]
         for i, a in enumerate(names):
             for b in names[i + 1:]:
                 if any(fk.other(a) == b for fk in self.foreign_keys if a in (fk.table, fk.ref_table)):
@@ -181,6 +186,13 @@ class Schema:
                         edges.append(ForeignKey(a, (col.name,), b, (other.name,), declared=False))
                         break
         return tuple(edges)
+
+    def is_role(self, table: str) -> bool:
+        return self.tables[table].role_of is not None
+
+    def countable(self, table: str) -> bool:
+        """Tables whose records a request can count or list as such (not bridges or roles)."""
+        return not self.is_bridge(table) and not self.is_role(table)
 
     def neighbors(self, table: str) -> list[str]:
         return sorted({fk.other(table) for fk in self.edges(table)})
@@ -357,10 +369,11 @@ class Schema:
                  "columns": [{"name": c.name, "type": c.declared_type, "kind": c.kind,
                               "primary_key": c.primary_key, "label": c.label,
                               "distinct": c.distinct_count} for c in t.columns]}
-                for t in self.tables.values()],
+                for t in self.tables.values() if t.role_of is None],
             "foreign_keys": [{"table": fk.table, "columns": list(fk.columns),
-                              "ref_table": fk.ref_table, "ref_columns": list(fk.ref_columns),
-                              "declared": fk.declared} for fk in self.foreign_keys],
+                              "ref_table": self.tables[fk.ref_table].physical, "ref_columns": list(fk.ref_columns),
+                              "declared": fk.declared} for fk in self.foreign_keys
+                             if self.tables[fk.table].role_of is None],
         }
 
 
@@ -440,6 +453,9 @@ def _infer_foreign_keys(tables: dict[str, Table], declared: list[ForeignKey]) ->
                            if t.name != table.name and len(t.primary_key) == 1
                            and t.primary_key[0].lower() in ("id", f"{t.name.lower()}_id")
                            and lemma_words(t.label) <= {lemma(w) for w in words}]
+            if (not targets and name.endswith("id") and len(table.primary_key) == 1
+                    and set(humanize(column.name).split()) & SELF_ROLES):
+                targets = [table.name]          # employees.manager_id -> employees.id
             if len(targets) == 1 and name.endswith("id"):
                 target = tables[targets[0]]
                 pk = target.column(target.primary_key[0])
@@ -448,6 +464,21 @@ def _infer_foreign_keys(tables: dict[str, Table], declared: list[ForeignKey]) ->
                     inferred.append(ForeignKey(table.name, (column.name,), target.name,
                                                (target.primary_key[0],), declared=False))
     return inferred
+
+
+SELF_ROLES = {"manager", "boss", "supervisor", "parent", "reports", "mentor", "superior", "head",
+              "leader", "referrer", "referred", "spouse", "partner", "predecessor", "successor"}
+
+
+def flag_values(values: tuple[str, ...]) -> tuple[str, str] | None:
+    """(true value, false value) when a column stores a two-valued flag."""
+    pairs = (("1", "0"), ("T", "F"), ("Y", "N"), ("yes", "no"), ("true", "false"), ("Yes", "No"),
+             ("TRUE", "FALSE"), ("y", "n"), ("t", "f"))
+    present = set(values)
+    for yes, no in pairs:
+        if present == {yes, no}:
+            return yes, no
+    return None
 
 
 def lemma_words(label: str) -> set[str]:
@@ -503,7 +534,66 @@ def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:
                                       tuple(r[4] for r in rows)))
     fks = _normalize_fks(tables, raw_fks)
     fks += _infer_foreign_keys(tables, fks)
+    tables, fks = _role_tables(tables, fks, values, parallel=PARALLEL_ROLES)
     return Schema(path, tables, tuple(fks), values)
+
+
+def _role_label(schema_tables: dict[str, Table], fk: ForeignKey) -> str:
+    base = schema_tables[fk.ref_table]
+    words = [w for w in humanize(" ".join(fk.columns)).split() if w not in ("id", "code", "no", "num")]
+    entity = [lemma(w) for w in base.label.split()]
+    if not words:
+        return base.label
+    if entity[-1] not in {lemma(w) for w in words}:
+        words += base.label.split()
+    return " ".join(words)
+
+
+def _role_tables(tables: dict[str, Table], fks: list[ForeignKey], values: dict[str, tuple[str, ...]],
+                 parallel: bool = False) -> tuple[dict[str, Table], list[ForeignKey]]:
+    """Role instances for tables referenced in several roles.
+
+    flights(source_airport, dest_airport) both reference airports; employees.manager_id
+    references employees.  A role (the destination airport, the manager) is a second
+    instance of the referenced table, joined through its own foreign key, so a request
+    can use two roles at once ('flights from Aberdeen to Ashley', 'employees earning more
+    than their manager').  The first of several parallel references stays a direct link
+    to the table; each further one and every self-reference becomes a role table with
+    the referenced table's columns, values and outgoing relationships.
+    """
+    groups: dict[tuple[str, str, tuple[str, ...]], list[ForeignKey]] = {}
+    for fk in fks:
+        groups.setdefault((fk.table, fk.ref_table, fk.ref_columns), []).append(fk)
+    roles: list[ForeignKey] = []
+    for (table, ref, _), members in groups.items():
+        if table == ref:
+            roles += members
+        elif parallel and len(members) >= 2:
+            roles += members[1:]
+    if not roles:
+        return tables, fks
+    out_tables = dict(tables)
+    out_fks = [fk for fk in fks if fk not in roles]
+    for fk in roles:
+        base = tables[fk.ref_table]
+        name = f"{fk.table}__{'_'.join(fk.columns)}"
+        while name in out_tables:
+            name += "_"
+        columns = tuple(replace(c, table=name) for c in base.columns)
+        label = _role_label(tables, fk)
+        if any(t.label == label for t in out_tables.values()):
+            label = f"{humanize(' '.join(fk.columns))} {base.label}"
+        out_tables[name] = Table(name, label, columns, base.primary_key,
+                                 base.row_count, role_of=base.name)
+        out_fks.append(ForeignKey(fk.table, fk.columns, name, fk.ref_columns, fk.declared))
+        for other in fks:
+            if other.table == base.name and other.ref_table != base.name and other not in roles:
+                out_fks.append(ForeignKey(name, other.columns, other.ref_table, other.ref_columns,
+                                          other.declared))
+        for column in base.columns:
+            if column.key in values:
+                values[f"{name}.{column.name}"] = values[column.key]
+    return out_tables, out_fks
 
 
 def _normalize_fks(tables: dict[str, Table], raw: list[ForeignKey]) -> list[ForeignKey]:
@@ -539,6 +629,9 @@ def _normalize_fks(tables: dict[str, Table], raw: list[ForeignKey]) -> list[Fore
     return result
 
 
+# Parallel references (source/destination airport) are disambiguated per query by a
+# relationship choice; role tables for them are an experiment (docs/EXPERIMENTS.md).
+PARALLEL_ROLES = os.environ.get("INTENTSQL_PARALLEL_ROLES", "0") == "1"
 _CACHE: dict[tuple[str, float, int], Schema] = {}
 _CACHE_LOCK = threading.Lock()
 

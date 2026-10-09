@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?|\d+(?:[.,]\d+)*")
+# "employee's" is the word "employee" (a possessive is not part of the word); "don't" stays whole.
+_WORD = re.compile(r"[A-Za-z]+(?:'(?!s\b)[A-Za-z]+)?|\d+(?:[.,]\d+)*")
+_POSSESSIVE_S = re.compile(r"(?<=[A-Za-z])['’]s\b")
 
 ABBREVIATIONS = {
     "id": "id", "num": "number", "no": "number", "nbr": "number", "qty": "quantity",
@@ -65,7 +67,9 @@ class Token:
 
 
 def tokenize(text: str) -> list[Token]:
-    return [Token(m.group(0), m.start(), m.end()) for m in _WORD.finditer(text)]
+    possessive = {m.start() + 1 for m in _POSSESSIVE_S.finditer(text)}
+    return [Token(m.group(0), m.start(), m.end()) for m in _WORD.finditer(text)
+            if m.start() not in possessive]
 
 
 def words(text: str) -> list[str]:

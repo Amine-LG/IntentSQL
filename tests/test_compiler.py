@@ -162,6 +162,31 @@ class CompilerTest(unittest.TestCase):
         self.assertEqual(plan["limit"], 3)
 
 
+    def test_derived_table_and_window(self):
+        inner = ir.Select(items=(ir.SelectItem(ir.Col("e", "name"), "name"),
+                                 ir.SelectItem(ir.Window("ROW_NUMBER", (ir.Col("e", "dept_id"),),
+                                                         (ir.OrderItem(ir.Col("e", "salary"), True),)), "rank")),
+                          from_=ir.From(ir.TableRef("emp", "e")), where=ir.IsNull(ir.Col("e", "dept_id"), True))
+        outer = ir.Select(items=(ir.SelectItem(ir.Col("d", "name")),),
+                          from_=ir.From(ir.Derived(inner, "d")),
+                          where=ir.Compare(ir.Col("d", "rank"), "<=", ir.Lit(1)))
+        compiled, rows = self.run_query(outer)
+        self.assertIn("ROW_NUMBER() OVER (PARTITION BY", compiled.sql)
+        self.assertEqual(sorted(rows), [("Bob",), ("Cy",)])
+
+    def test_derived_columns_are_validated(self):
+        inner = ir.Select(items=(ir.SelectItem(ir.Agg("SUM", ir.Col("e", "salary")), "total"),),
+                          from_=ir.From(ir.TableRef("emp", "e")), group_by=(ir.Col("e", "dept_id"),))
+        outer = ir.Select(items=(ir.SelectItem(ir.Agg("AVG", ir.Col("d", "missing"))),),
+                          from_=ir.From(ir.Derived(inner, "d")))
+        with self.assertRaises(CompileError) as caught:
+            compile_query(outer, self.schema)
+        self.assertEqual(caught.exception.issues[0].code, "unknown_column")
+        ok = ir.Select(items=(ir.SelectItem(ir.Agg("AVG", ir.Col("d", "total"))),),
+                       from_=ir.From(ir.Derived(inner, "d")))
+        self.assertEqual(self.run_query(ok)[1], [(300.0,)])
+
+
 class SchemaTest(unittest.TestCase):
     def test_introspection_types_keys_and_paths(self):
         with tempfile.TemporaryDirectory() as tmp:

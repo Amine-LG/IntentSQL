@@ -99,9 +99,15 @@ CASES = [
      "SELECT T1.name FROM customers T1 JOIN orders T2 ON T2.customer_id = T1.id GROUP BY T1.id HAVING COUNT(*) > (SELECT COUNT(*) * 1.0 / (SELECT COUNT(*) FROM customers) FROM orders)",
      ["SELECT T1.name FROM customers T1 JOIN orders T2 ON T2.customer_id = T1.id GROUP BY T1.id HAVING COUNT(*) > (SELECT COUNT(*) * 1.0 / COUNT(DISTINCT customer_id) FROM orders)"]),
     ("topn-1", "aggregation_join", "What are the top 3 categories by average order line value?",
-     "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3", None, True, "P2"),
+     "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3",
+     ["SELECT T3.name, AVG(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id "
+      "JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"],
+     True, "P2"),
     ("topn-2", "aggregation_join", "Which three categories have the highest average sales amount per order line?",
-     "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3", None, True, "P2"),
+     "SELECT T3.name FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3",
+     ["SELECT T3.name, AVG(T1.quantity * T1.unit_price) FROM order_items T1 JOIN products T2 ON T1.product_id = T2.id "
+      "JOIN categories T3 ON T2.category_id = T3.id GROUP BY T3.id ORDER BY AVG(T1.quantity * T1.unit_price) DESC LIMIT 3"],
+     True, "P2"),
 
     # --- NULL semantics ---------------------------------------------------------------------
     ("null-1", "nulls", "Which customers have no email address?", "SELECT name FROM customers WHERE email IS NULL"),

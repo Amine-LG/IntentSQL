@@ -96,6 +96,9 @@ class _Scope:
         return None
 
 
+DERIVED = "\0derived:"     # scope marker for a FROM subquery (never a real table name)
+
+
 @dataclass
 class _Compiler:
     schema: Schema
@@ -104,6 +107,7 @@ class _Compiler:
     params: list[Any] = field(default_factory=list)
     display_params: list[str] = field(default_factory=list)
     issues: list[ValidationIssue] = field(default_factory=list)
+    derived: dict[str, frozenset[str]] = field(default_factory=dict)   # alias -> column names
 
     # -- issues ---------------------------------------------------------------
     def fail(self, code: str, message: str, node: Any = None) -> None:
@@ -114,6 +118,10 @@ class _Compiler:
         table = scope.resolve(col.source)
         if table is None:
             self.fail("unknown_alias", f"Column {col.column} refers to unknown source {col.source}", col)
+            return None
+        if table.startswith(DERIVED):
+            if col.column not in self.derived.get(col.source, frozenset()):
+                self.fail("unknown_column", f"Subquery {col.source} has no column {col.column}", col)
             return None
         try:
             return self.schema.table(table).column(col.column)
@@ -199,6 +207,16 @@ class _Compiler:
                 parts.append(f"ELSE {self.expr(node.otherwise, scope, allow_agg=allow_agg)}")
             parts.append("END")
             return " ".join(parts)
+        if isinstance(node, ir.Window):
+            if node.func not in ir.WINDOW_FUNCTIONS:
+                self.fail("bad_window", f"Unknown window function {node.func}", node)
+            parts = []
+            if node.partition:
+                parts.append("PARTITION BY " + ", ".join(self.expr(e, scope) for e in node.partition))
+            if node.order:
+                parts.append("ORDER BY " + ", ".join(
+                    f"{self.expr(o.expr, scope)}{' DESC' if o.desc else ' ASC'}" for o in node.order))
+            return f"{node.func}() OVER ({' '.join(parts)})"
         if isinstance(node, ScalarQuery):
             width = _width(node.query)
             if width != 1:
@@ -284,6 +302,13 @@ class _Compiler:
             return "SELECT NULL"
         refs: dict[str, str] = {}
         for ref in node.from_.refs:
+            if isinstance(ref, ir.Derived):
+                names = [item.alias for item in ref.query.items]
+                if any(name is None for name in names):
+                    self.fail("derived_unnamed", "Every column of a FROM subquery needs a name", ref)
+                self.derived[ref.alias] = frozenset(n for n in names if n)
+                refs[ref.alias] = DERIVED + ref.alias
+                continue
             try:
                 table = self.schema.table(ref.table).name
             except KeyError:
@@ -341,9 +366,12 @@ class _Compiler:
             text += f" OFFSET {offset}"
         return text
 
-    def _table(self, ref: ir.TableRef) -> str:
+    def _table(self, ref: ir.TableRef | ir.Derived) -> str:
+        if isinstance(ref, ir.Derived):
+            inner = f"({self.query(ref.query)})"
+            return f"{inner} AS {self.aliases[ref.alias]}" if self.use_aliases else f"{inner} AS {quote(ref.alias)}"
         try:
-            name = quote(self.schema.table(ref.table).name)
+            name = quote(self.schema.table(ref.table).physical)
         except KeyError:
             name = quote(ref.table)
         if self.use_aliases:
@@ -357,8 +385,8 @@ def _width(query: Query) -> int:
     return len(query.items) if all(not isinstance(i.expr, Star) for i in query.items) else -1
 
 
-def _all_refs(query: Any) -> list[ir.TableRef]:
-    return [node for node in ir.walk(query) if isinstance(node, ir.TableRef)]
+def _all_refs(query: Any) -> list[ir.TableRef | ir.Derived]:
+    return [node for node in ir.walk(query) if isinstance(node, (ir.TableRef, ir.Derived))]
 
 
 def compile_query(query: Query, schema: Schema) -> CompiledSQL:
