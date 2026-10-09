@@ -59,6 +59,7 @@ class Condition:
     related      subject has related ``table`` rows (semi-join: IN, no row multiplication)
     same_as      column equals that of the record(s) matching ``inner`` ("same department as Clara")
     having_vs    func(column) per group op the overall func(column) of its table
+    top_group    column op the most (func=DESC) / least (ASC) common value of that column
     vs_aggregate column op func(agg_column) over all rows of its table
     having       func(column or COUNT(*) of table) op values[0], per group
     """
@@ -168,6 +169,9 @@ def describe_condition(schema: Schema, cond: Condition, subject: str | None = No
         return f"{phrase} is {'not ' if cond.negated else ''}one of {values}"
     if cond.kind == "null":
         return f"{phrase} is {'present' if cond.negated else 'missing (null)'}"
+    if cond.kind == "top_group":
+        word = "most" if cond.func != "ASC" else "least"
+        return f"{phrase} {'is' if cond.op == '=' else 'is not'} the {word} common {phrase}"
     if cond.kind == "having_vs":
         word = FUNC_WORDS[cond.func or 'AVG']
         return (f"the {word} {phrase} per group {OP_WORDS[cond.op]} the {word} {phrase} "
@@ -302,6 +306,15 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "having":
         expr = _agg_expr(scope, cond.func, cond.column, cond.table)
         return ir.Compare(expr, cond.op, ir.Lit(cond.values[0]))
+    if cond.kind == "top_group":
+        counter[0] += 1
+        table = cond.column.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        col = inner_scope.col(cond.column)
+        sub = ir.Select(items=(ir.SelectItem(col),), from_=inner_from, group_by=(col,),
+                        order_by=(ir.OrderItem(ir.Agg("COUNT", ir.Star()), cond.func != "ASC"),),
+                        limit=1)
+        return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
     if cond.kind == "having_vs":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]

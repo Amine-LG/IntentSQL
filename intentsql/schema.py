@@ -299,6 +299,18 @@ class Schema:
             current = nxt
         return current
 
+    @cached_property
+    def _key_columns(self) -> frozenset[str]:
+        keys = {c.key for c in self.columns if c.is_identifier}
+        for fk in self.foreign_keys:
+            keys.update(f"{fk.table}.{c}" for c in fk.columns)
+            keys.update(f"{fk.ref_table}.{c}" for c in fk.ref_columns)
+        return frozenset(keys)
+
+    def is_key(self, key: str) -> bool:
+        """Identifier-like: a primary key, any column of a foreign key, or an *_id name."""
+        return key in self._key_columns
+
     def one_to_many(self, a: str, b: str) -> bool:
         """True when following the shortest path from ``a`` to ``b`` can reach several
         ``b`` rows for one ``a`` row (some step goes from a referenced table to a

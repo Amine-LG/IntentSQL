@@ -50,11 +50,18 @@ EXPLICIT_AGG = {
 COUNT_CUE = re.compile(r"\b(number of|how many|count of|count the)\b", re.I)
 STAR_CUE = re.compile(r"\b(all (the )?(information|info|details|data|attributes|columns|fields)|"
                       r"everything|every (detail|attribute|column))\b", re.I)
+AGG_WORDS = {
+    "AVG": EXPLICIT_AGG["AVG"], "SUM": EXPLICIT_AGG["SUM"],
+    "MAX": re.compile(r"\b(max|maximum|highest|largest|biggest|greatest)\b", re.I),
+    "MIN": re.compile(r"\b(min|minimum|lowest|smallest|least)\b", re.I),
+}
 DISTINCT_CUE = re.compile(r"\b(distinct|different|unique|differ\w*|various)\b", re.I)
 NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neither|nor|other than|"
                           r"lacks?|apart from|besides)\b|n't\b", re.I)
 AGG_COMPARE_CUE = re.compile(r"\b(average|mean|than (any|all|every|each|the (maximum|minimum|largest|"
                              r"smallest|highest|lowest|max|min))|than (that|those) of)\b", re.I)
+THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b", re.I)
+TOP_GROUP_CUE = re.compile(r"\b(most|least)\s+(common|popular|frequent|usual)\b", re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
 MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
@@ -128,6 +135,9 @@ class Strategy:
     categorical_threshold: float = 0.6
     exclusion_threshold: float = 0.6
     value_examples: int = 3
+    debias_order: bool = False          # ask each Choice twice with reversed options
+    state_values: bool = False          # sample stored values in the schema description
+    state_relations: bool = False       # list FK relationships in the state
 
 
 # ---- scope ---------------------------------------------------------------------------
@@ -174,10 +184,10 @@ def _classes(g: Grounding, tables: list[str]) -> list[str]:
             if column.key in covered:
                 continue
             members = [column.key]
-            if column.is_identifier:
+            if schema.is_key(column.key):
                 members += [m for m in schema.equivalents(column.key)
                             if m != column.key and m.split(".")[0] in tables
-                            and schema.column(m).is_identifier and m not in covered]
+                            and schema.is_key(m) and m not in covered]
             covered.update(members)
             canon = schema.canonical(column.key)
             reps.append(max(members, key=lambda m: (g.column_link.get(m, 0),
@@ -233,8 +243,12 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
             options += [Option(func, f"the {word} {phrase}", OutputItem(func, column.key))
                         for func, word in AGG_FUNCS]
         cands.outputs.append(OutputGroup(f"o{i}", phrase, options))
-    cue_funcs = [f for f, cue in EXPLICIT_AGG.items() if cue.search(g.question)]
-    if len(cue_funcs) >= 2:
+    cue_funcs = [f for f, cue in AGG_WORDS.items() if cue.search(g.question)]
+    if len(cue_funcs) >= 2 and any(cue.search(g.question) for cue in EXPLICIT_AGG.values()) or len(
+            [f for f, cue in EXPLICIT_AGG.items() if cue.search(g.question)]) >= 2 or (
+            re.search(r"\b(highest|largest|maximum|max)\b.*\b(lowest|smallest|minimum|min)\b|"
+                      r"\b(lowest|smallest|minimum|min)\b.*\b(highest|largest|maximum|max)\b",
+                      g.question, re.I)):
         for column in columns:
             if column.is_numeric and not column.is_identifier:
                 cands.multi_agg.extend((column.key, f) for f in cue_funcs)
@@ -278,6 +292,19 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                         f"a{len(cands.vs_aggregate)}",
                         f"each group's average {phrase} is {word} the average {phrase} of all {label} records",
                         Condition("having_vs", column.key, op, func="AVG")))
+        cands.vs_aggregate = cands.vs_aggregate[:250]
+
+    if TOP_GROUP_CUE.search(g.question):
+        for column in columns:
+            if column.kind == TEXT and not column.primary_key and (column.distinct_count or 0) >= 2:
+                phrase = column_phrase(schema, column.key)
+                for desc, word in ((True, "most common"), (False, "least common")):
+                    for negated in (False, True):
+                        cands.vs_aggregate.append(Option(
+                            f"a{len(cands.vs_aggregate)}",
+                            f"results whose {phrase} {'is not' if negated else 'is'} the {word} {phrase}",
+                            Condition("top_group", column.key, "!=" if negated else "=",
+                                      func="DESC" if desc else "ASC")))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
     for column in columns:
@@ -430,10 +457,22 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
 # ---- questions ---------------------------------------------------------------------------
 
 def _state(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, Any]:
+    schema = g.schema
     state: dict[str, Any] = {"request": g.question}
     if strategy.include_schema_in_state:
-        state["database"] = {g.schema.tables[t].label: [c.label for c in g.schema.tables[t].columns]
+        def label(c: Column) -> str:
+            values = schema.values.get(c.key, ())
+            if strategy.state_values and values and c.kind == TEXT and not c.is_identifier:
+                return f"{c.label} (e.g. {', '.join(repr(v) for v in values[:2])})"
+            return c.label
+        state["database"] = {schema.tables[t].label: [label(c) for c in schema.tables[t].columns]
                              for t in cands.tables}
+    if strategy.state_relations:
+        state["relationships"] = [
+            f"{schema.table(fk.table).label}.{schema.table(fk.table).column(fk.columns[0]).label} "
+            f"refers to {schema.table(fk.ref_table).label}"
+            for fk in schema.foreign_keys
+            if fk.table in cands.tables and fk.ref_table in cands.tables]
     return state
 
 
@@ -441,16 +480,17 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
     schema = g.schema
     q: dict[str, Question] = {}
     q["count"] = choice(
-        "Does `request` ask to be told a count (how many)? If so, a count of what? Ranking or "
-        "filtering by a count ('the most', 'at least 3') does not by itself ask to show the count.",
+        "Does `request` ask to be told a count (how many, the number of)? If so, a count of what? "
+        "Ranking or filtering by a count ('the most', 'at least 3') does not by itself ask to show "
+        "the count, and 'what are the different X' asks to list them, not to count them.",
         {**{o.key: o.text for o in cands.counts}, "none": "the request does not ask for a count"})
     for group in cands.outputs:
         opts = {o.key: o.text for o in group.options}
         opts["no"] = (f"not shown: the {group.phrase} is not requested, or is only used to "
                       "filter, sort, rank or group the results")
-        column = schema.column(group.options[0].payload.column)
         hint = (" An identifier or code is shown only when the request asks for the id, code or "
-                "number itself, not when it merely mentions the record." if column.is_identifier else "")
+                "number itself, not when it merely mentions the record."
+                if schema.is_key(group.options[0].payload.column) else "")
         q[f"out_{group.key}"] = choice(
             f"Does `request` ask to show the {group.phrase} in the results? If so, in which form?"
             + hint, opts)
@@ -521,7 +561,7 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
     if cands.vs_aggregate:
         q["vsagg"] = choice(
             "Does `request` compare each result's value with an average, maximum or minimum "
-            "computed over all records? If so, which comparison?",
+            "computed over all records, or with the most/least common value? If so, which?",
             {**{o.key: o.text for o in cands.vs_aggregate}, "none": "no such comparison"})
     q["group"] = choice(
         "Does `request` ask for one result row per group (e.g. 'for each', 'per', 'by')? "
@@ -532,12 +572,14 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
         "Does `request` ask for the results to be sorted or ranked (including 'the most', "
         "'the highest', 'top')? If so, by what?",
         {**{o.key: o.text for o in cands.orders}, "unordered": "no ordering or ranking"})
+    if THEN_CUE.search(g.question):
+        q["order2"] = choice(
+            "If `request` sorts results by a second criterion after the first one (e.g. 'then "
+            "by name'), what is that second criterion?",
+            {**{o.key: o.text for o in cands.orders}, "unordered": "no second sort criterion"})
     q["limit"] = choice(
         "Does `request` ask for only the top or first item(s) of a ranked list? If so, how many?",
         {o.key: o.text for o in cands.limits})
-    if DISTINCT_CUE.search(g.question):
-        q["distinct"] = noul("Does `request` ask for each value to be listed only once "
-                             "(distinct, different or unique values)?")
     q["connector"] = choice(
         "If `request` states several conditions, must every result satisfy all of them, or "
         "is satisfying any one of them enough?",
@@ -568,6 +610,7 @@ class Interpretation:
     uncertain: list[str]
     message: str | None = None
     followup: dict[str, Question] | None = None
+    answers: dict[str, Answer] = field(default_factory=dict)
 
 
 def _position(g: Grounding, item: OutputItem) -> int:
@@ -710,6 +753,10 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                 continue
         if exclude and condition.op not in ("!=", "not_contains"):
             excluded.append(condition)
+        elif exclude and not _identifies_rows(schema, key.split(".")[0], outputs):
+            # 'publishers which do not have a book in 1989': a publisher qualifies when none
+            # of its rows matches -- a set difference, not a row filter.
+            excluded.append(_positive(condition))
         else:
             conditions.append(condition)
 
@@ -723,10 +770,14 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         conditions.append(Condition("compare", key, "=", (option.payload,)))
 
     # -- comparison with an aggregate
+    top_group: Condition | None = None
     if "vsagg" in answers and answers["vsagg"].choice != "none":
         option = _pick(cands.vs_aggregate, answers["vsagg"])
         record("vsagg", "aggregate comparison", option.text, answers["vsagg"], option.text)
-        conditions.append(option.payload)
+        if option.payload.kind == "top_group":
+            top_group = option.payload      # kept unless a count ranking already expresses it
+        else:
+            conditions.append(option.payload)
 
     # -- grouping, ordering, limit, distinct, connector, relationship roles
     group_by: list[str] = []
@@ -739,16 +790,22 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         option = _pick(cands.orders, answers["order"])
         order = (option.payload,)
         record("order", "ordering", option.text, answers["order"], option.text)
+    if order and "order2" in answers and answers["order2"].choice != "unordered":
+        option = _pick(cands.orders, answers["order2"])
+        if option.payload.column != order[0].column or option.payload.table != order[0].table:
+            order = order + (option.payload,)
+            record("order2", "ordering", option.text, answers["order2"], option.text)
     limit_option = _pick(cands.limits, answers["limit"])
     record("limit", "limit", limit_option.text, answers["limit"], limit_option.payload)
     if limit_option.payload is not None:
         limit = limit_option.payload
     if not order:
         limit = None
-    distinct = False
-    if "distinct" in answers:
-        distinct = (answers["distinct"].p or 0) >= strategy.distinct_threshold
-        record("distinct", "distinct", "list each value once", answers["distinct"], distinct)
+    if top_group is not None and not (order and order[0].is_aggregate):
+        conditions.append(top_group)
+    # 'distinct / different / unique' lists each value once (Spider train: ~95% of
+    # such listings); without the cue, rows are listed as stored.
+    distinct = bool(DISTINCT_CUE.search(g.question))
     connector = "OR" if answers["connector"].choice == "any" else "AND"
     join_choices = []
     for pair, options in cands.joins.items():
@@ -758,6 +815,14 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         record(f"join_{pair}", "relationship role", option.text, answer, option.payload)
 
     # -- deterministic shaping
+    if order and limit is not None:
+        multi = {(k, f) for k, f in cands.multi_agg}
+        outputs = [o for o in outputs if not ((o.column, o.func) in multi and o.func in ("MIN", "MAX")
+                                              and len([x for x in outputs if x.column == o.column]) > 1)]
+    if outputs and all(o.is_aggregate for o in outputs) and not group_by and not any(
+            c.kind in ("having", "having_vs") for c in conditions):
+        order, limit = (), None    # a single aggregate row has nothing to sort or cut
+    outputs = _prefer_named_tables(g, outputs)
     outputs = _shape_outputs(g, outputs, order, limit, group_by, conditions)
     outputs.sort(key=lambda item: _position(g, item))
     output_tables = {t for o in outputs for t in o.tables}
@@ -801,6 +866,18 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                         for c in conditions):
         group_by = []          # grouping by a column pinned to one value yields a single group
     if group_by:
+        # 'for each rank and gender': every plain categorical output is a group key too.
+        key_identifies = _identifies_rows(schema, group_by[0].split(".")[0],
+                                          [OutputItem(None, group_by[0])])
+        for o in outputs:
+            if key_identifies:
+                break
+            if (o.column and not o.is_aggregate and o.column not in group_by
+                    and not schema.is_key(o.column)
+                    and not any(o.column in schema.equivalents(k) for k in group_by)
+                    and not _identifies_rows(schema, o.column.split(".")[0], [o])
+                    and o.column.split(".")[0] == group_by[0].split(".")[0]):
+                group_by.append(o.column)
         group_classes = set(schema.equivalents(group_by[0]))
         outputs = [OutputItem("COUNT", None, o.column.split(".")[0])
                    if o.func == "COUNT" and o.distinct and o.column in group_classes else o
@@ -1012,6 +1089,24 @@ def _group_label(schema: Schema, key: str, outputs: list[OutputItem]) -> str | N
     return key
 
 
+def _prefer_named_tables(g: Grounding, outputs: list[OutputItem]) -> list[OutputItem]:
+    """'the names of all the teachers': when the same attribute exists in several
+    tables and the request names one of them, read it from the named table."""
+    schema = g.schema
+    chosen_tables = {t for o in outputs for t in o.tables}
+    result = []
+    for item in outputs:
+        if item.column and not g.table_link.get(item.column.split(".")[0], 0):
+            label = schema.column(item.column).label
+            named = [c.key for t, tl in g.table_link.items() if tl > 0 and t not in chosen_tables
+                     for c in schema.table(t).columns if c.label == label]
+            if len(named) == 1 and not any(t in chosen_tables and g.table_link.get(t, 0) > 0
+                                           for t in chosen_tables):
+                item = OutputItem(item.func, named[0], item.table, item.distinct)
+        result.append(item)
+    return result
+
+
 def _numeric_op(op: str | None) -> str:
     return op if op in NUMERIC_OPS else "="
 
@@ -1119,7 +1214,7 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
             continue
         between = _text_between(g, conds[0].values[0], conds[1].values[0])
         wants_both = (connector == "AND" if between is None else
-                      bool(re.search(r"\b(and|both)\b", between, re.I))
+                      bool(re.search(r"\b(and|both|as well as)\b", between, re.I))
                       and not re.search(r"\bor\b", between, re.I))
         table = conds[0].column.split(".")[0]
         if wants_both and table != subject:
@@ -1185,8 +1280,15 @@ def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
     def m(key: str | None) -> str | None:
         return mapping.get(key, key) if key else key
 
-    outputs = tuple(dict.fromkeys(OutputItem(o.func, m(o.column), o.table, o.distinct, o.star)
-                                  for o in intent.outputs))
+    outputs_list: list[OutputItem] = []
+    for o in intent.outputs:
+        item = OutputItem(o.func, m(o.column), o.table, o.distinct, o.star)
+        if item in outputs_list or (item.column and not item.func and any(
+                x.column and not x.func and x.column in schema.equivalents(item.column)
+                for x in outputs_list)):
+            continue   # the same value read twice through a foreign key
+        outputs_list.append(item)
+    outputs = tuple(outputs_list)
     conditions = tuple(Condition(c.kind, m(c.column), c.op, c.values, c.negated, c.func, c.table,
                                  c.inner) for c in intent.conditions)
     order = tuple(Ordering(o.func, m(o.column), o.table, o.desc) for o in intent.order)
@@ -1199,6 +1301,32 @@ def rebind_equivalents(schema: Schema, intent: Intent) -> Intent:
 
 # ---- entry point -------------------------------------------------------------------------
 
+def _ask_debiased(ask: "AskFn", state: dict[str, Any], questions: dict[str, Question]
+                  ) -> dict[str, Answer]:
+    """Ask every multi-option Choice also with its options reversed; average the two
+    distributions to cancel Jev's documented lean toward the first option."""
+    twins = {}
+    for key, q in questions.items():
+        if q.kind == "choice" and q.options and len(q.options) > 2:
+            twins[f"{key}~r"] = Question("choice", q.instructions,
+                                         dict(reversed(list(q.options.items()))))
+    answers = ask(state, {**questions, **twins}, "interpretation")
+    merged: dict[str, Answer] = {}
+    for key, answer in answers.items():
+        if key.endswith("~r"):
+            continue
+        twin = answers.get(f"{key}~r")
+        if twin is None:
+            merged[key] = answer
+            continue
+        probs = {k: (answer.probabilities.get(k, 0.0) + twin.probabilities.get(k, 0.0)) / 2
+                 for k in set(answer.probabilities) | set(twin.probabilities)}
+        best = max(probs, key=lambda k: probs[k])
+        merged[key] = Answer("choice", best, probs, None)
+    return merged
+
+
+
 AskFn = Callable[[dict[str, Any], dict[str, Question], str], dict[str, Answer]]
 
 
@@ -1207,7 +1335,11 @@ def interpret(g: Grounding, ask: AskFn, strategy: Strategy | None = None
     strategy = strategy or Strategy()
     cands = build_candidates(g, strategy)
     state = _state(g, cands, strategy)
-    answers = ask(state, round_one(g, cands, strategy), "interpretation")
+    questions = round_one(g, cands, strategy)
+    if strategy.debias_order:
+        answers = _ask_debiased(ask, state, questions)
+    else:
+        answers = ask(state, questions, "interpretation")
     interpretation = assemble(g, cands, answers, strategy)
     rounds = 1
     while interpretation.followup and rounds < MAX_ROUNDS + 1:
@@ -1216,4 +1348,37 @@ def interpret(g: Grounding, ask: AskFn, strategy: Strategy | None = None
         rounds += 1
     if interpretation.intent is None and not interpretation.message:
         interpretation.message = "Could not determine what the request asks to return."
+    interpretation.answers = answers
     return interpretation, cands
+
+
+def alternatives(g: Grounding, cands: Candidates, interpretation: Interpretation,
+                 strategy: Strategy | None = None, limit: int = 4,
+                 margin: float = 0.5) -> list[tuple[str, Intent]]:
+    """Intents obtained by flipping one low-margin decision to its runner-up option.
+
+    The same deterministic assembly runs on the modified answers, so every
+    alternative is as well-formed as the original; nothing new is invented.
+    """
+    strategy = strategy or Strategy()
+    answers = interpretation.answers
+    ranked = []
+    for key, answer in answers.items():
+        if answer.kind == "choice" and len(answer.probabilities) >= 2:
+            (top, p1), (second, p2) = answer.ranked()[:2]
+            if p1 - p2 < margin and p2 > 0.02:
+                ranked.append((p1 - p2, key, Answer("choice", second, answer.probabilities,
+                                                    answer.confidence)))
+        elif answer.kind == "noul" and answer.p is not None and abs(answer.p - 0.5) < margin / 2:
+            ranked.append((abs(answer.p - 0.5) * 2, key, Answer("noul", p=1 - answer.p)))
+    ranked.sort(key=lambda r: r[0])
+    out: list[tuple[str, Intent]] = []
+    seen = {interpretation.intent}
+    for _, key, flipped in ranked:
+        if len(out) >= limit:
+            break
+        alt = assemble(g, cands, {**answers, key: flipped}, strategy)
+        if alt.intent is not None and alt.intent not in seen and not alt.followup:
+            seen.add(alt.intent)
+            out.append((key, alt.intent))
+    return out

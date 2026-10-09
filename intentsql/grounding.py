@@ -16,11 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from intentsql.schema import NUMBER, TEXT, Column, Schema, quote_identifier
-from intentsql.text import NUMBER_WORDS, STOPWORDS, Token, lemma, stem, tokenize
+from intentsql.text import NUMBER_WORDS, ORDINALS, STOPWORDS, Token, lemma, stem, tokenize
 
 _QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”|‘([^’]+)’|(?<![A-Za-z])'([^']+)'(?![A-Za-z])")
 _NUMBER = re.compile(r"(?<![\w.])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])[-+]?\d+(?:\.\d+)?(?![\w])")
 _DATE = re.compile(r"(?<![\w-])\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?(?![\w-])")
+_MONTHS = {m: i for i, m in enumerate(
+    "january february march april may june july august september october november december".split(), 1)}
+_MONTH_RE = "(" + "|".join(list(_MONTHS) + [m[:3] for m in _MONTHS]) + r")\.?"
+_NATURAL_DATE = re.compile(
+    rf"\b{_MONTH_RE}\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b|"
+    rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTH_RE},?\s+(\d{{4}})\b", re.I)
+_LETTER = re.compile(r"\b(?:letter|character)\s+['\"]?([A-Za-z])['\"]?(?![A-Za-z])", re.I)
 MAX_NGRAM = 8
 
 
@@ -186,6 +193,20 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             add(text, matches[0][1] if matches else text, "date", match.start(), match.end(),
                 matches, exact=bool(matches))
 
+    # 1c. Natural dates ('June 21, 2002') become ISO literals; 'the letter m' a text literal.
+    for match in _NATURAL_DATE.finditer(question):
+        if not free(match.start(), match.end()):
+            continue
+        g = match.groups()
+        month, day, year = ((g[0], g[1], g[2]) if g[0] else (g[4], g[3], g[5]))
+        number = _MONTHS.get(month.lower().rstrip(".")) or next(
+            v for k, v in _MONTHS.items() if k.startswith(month.lower()[:3]))
+        iso = f"{int(year):04d}-{number:02d}-{int(day):02d}"
+        add(match.group(0), iso, "date", match.start(), match.end())
+    for match in _LETTER.finditer(question):
+        if free(match.start(1), match.end(1)):
+            add(match.group(1), match.group(1), "text", match.start(1), match.end(1))
+
     # 2. Longest stored-value matches over token n-grams.
     spans = []
     for i in range(len(tokens)):
@@ -203,7 +224,7 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             if not matches:
                 continue
             words = [t.lower for t in tokens[i:j]]
-            if all(w in STOPWORDS for w in words):
+            if all(w in STOPWORDS for w in words) and not all(t.text.isupper() for t in tokens[i:j]):
                 continue
             if j - i == 1:
                 word = tokens[i].text
@@ -237,6 +258,14 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             continue
         if token.lower == "one" and _one_is_pronoun(question, token):
             continue
+        add(token.text, value, "number", token.start, token.end)
+    for position, token in enumerate(tokens):
+        value = ORDINALS.get(token.lower)
+        if value is None or not free(token.start, token.end) or token.lower == "first":
+            continue
+        following = tokens[position + 1].lower if position + 1 < len(tokens) else ""
+        if following.endswith("est") or following in ("most", "least", "highest", "lowest"):
+            continue      # 'second highest' is a rank offset, not a value
         add(token.text, value, "number", token.start, token.end)
 
     # 4. Capitalized spans not found verbatim: fuzzy candidates (typos, case).
