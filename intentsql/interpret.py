@@ -500,7 +500,11 @@ def _column_comparisons(g: Grounding, columns: list[Column]) -> list[Option]:
                 pairs.append((schema.table(base).column(column.name), column))
     options: list[Option] = []
     pairs += [(a, b) for i, a in enumerate(linked) for b in linked[i + 1:]]
-    for a, b in dict.fromkeys(pairs):
+    pairs = [(a, b) for a, b in dict.fromkeys(pairs)
+             if not any(fk.table == a.table and a.name in fk.columns and fk.ref_table == b.table
+                        for fk in schema.foreign_keys)]          # not the reference itself
+    pairs.sort(key=lambda p: -(g.column_link.get(p[0].key, 0) + g.column_link.get(p[1].key, 0)))
+    for a, b in pairs:
         if schema.is_key(a.key):
             # 'in the same store as their manager': references compare for equality only.
             options += [Option(f"x{len(options)}", f"the {column_phrase(schema, a.key)} is {word} the "

@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -94,6 +95,28 @@ class WebTest(unittest.TestCase):
         self.assertEqual(result["status"], "answered")
         self.assertEqual(result["rows"], [[5]])
         self.assertIn("decisions", result)
+
+
+    def test_streamed_answer_reports_progress_then_result(self):
+        name = self.upload().json()["name"]
+        jev = ScriptedJev([("^count$", "", "how many order records")])
+        with mock.patch.object(self.web, "shared_client", return_value=jev), \
+                mock.patch("intentsql.pipeline.shared_client", return_value=jev):
+            response = self.client.post("/api/ask/stream", json={"database": name, "question": "How many orders?"})
+        events = [block.split("\n") for block in response.text.strip().split("\n\n")]
+        kinds = [lines[0].removeprefix("event: ") for lines in events]
+        self.assertIn("phase", kinds)
+        self.assertEqual(kinds[-1], "result")
+        result = json.loads(events[-1][1].removeprefix("data: "))
+        self.assertEqual(result["rows"], [[5]])
+
+    def test_examples_and_parameterized_console(self):
+        name = self.upload().json()["name"]
+        self.assertIn("How many orders does each customer have?",
+                      self.client.get(f"/api/databases/{name}/examples").json())
+        rows = self.client.post("/api/sql", json={"database": name, "sql": "SELECT name FROM customers WHERE city = ?",
+                                                  "params": ["Lyon"]}).json()["rows"]
+        self.assertEqual(sorted(rows), [["Bob"], ["Ed"]])
 
 
 if __name__ == "__main__":

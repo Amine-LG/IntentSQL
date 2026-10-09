@@ -95,7 +95,22 @@ def _join(parts: list[str], word: str = "and") -> str:
     return ", ".join(parts[:-1]) + f" {word} " + parts[-1]
 
 
+SIMPLE = ("compare", "text", "between", "in_values", "null", "period")
+
+
 def condition(schema: Schema, cond: Condition, subject: str | None) -> str:
+    """'whose price is ...' for the subject's own attributes; 'that has an order whose
+    status is ...' for attributes of records related one-to-many."""
+    table = cond.column.split(".")[0] if cond.column and cond.kind in SIMPLE else None
+    if (table and subject and table != subject and table in schema.tables and subject in schema.tables
+            and not schema.is_role(table) and schema.one_to_many(subject, table)):
+        noun = entity(schema, table)
+        article = "an" if noun[:1].lower() in "aeiou" else "a"
+        return f"that has {article} {noun} {_condition(schema, cond, table)}"
+    return _condition(schema, cond, subject)
+
+
+def _condition(schema: Schema, cond: Condition, subject: str | None) -> str:
     kind = cond.kind
     if kind == "absent":
         what = plural(entity(schema, cond.table or ""))

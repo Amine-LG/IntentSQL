@@ -76,6 +76,21 @@ class AdvancedTest(unittest.TestCase):
         self.assertEqual(rows(result), [(2,)])
         self.assertIn("February 2024", result.explanation)
 
+    def test_empty_result_is_explained(self):
+        result = self.ask("How many orders were placed in March 2023?", [
+            ("^count$", "", "how many order records"),
+            ("^role_", r"\[March 2023\]", "time period"),
+            ("^lop_", "", "during this period")])
+        self.assertEqual(rows(result), [(0,)])
+        self.assertIn("the data covers 2024-01-05 to 2024-03-09", result.message)
+
+    def test_examples_come_from_the_schema(self):
+        from intentsql.examples import examples
+        from intentsql.schema import load_schema
+        found = examples(load_schema(self.db))
+        self.assertIn("How many orders does each customer have?", found)
+        self.assertIn("Which customers have no orders?", found)
+
     def test_period_parsing(self):
         today = date(2026, 10, 9)
         found = {text: value[:2] for _, _, text, value in periods(

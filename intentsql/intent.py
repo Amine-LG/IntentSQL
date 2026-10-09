@@ -9,6 +9,7 @@ the SQL structure (join tree, subqueries, set operations, GROUP BY) from it.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -21,6 +22,8 @@ TEXT_OPS = {"contains": "%{}%", "starts": "{}%", "ends": "%{}"}
 OP_WORDS = {"=": "is", "!=": "is not", ">": "is greater than", "<": "is less than",
             ">=": "is at least", "<=": "is at most", "contains": "contains",
             "starts": "starts with", "ends": "ends with", "not_contains": "does not contain"}
+# Filters through one-to-many relationships are membership tests (no repeated rows).
+SEMI_JOIN_FILTERS = os.environ.get("INTENTSQL_SEMI_JOIN", "1") != "0"
 DATE_PARTS = {"year": "%Y", "month": "%Y-%m", "day": "%Y-%m-%d", "weekday": "%w", "hour": "%H"}
 FUNC_WORDS = {"COUNT": "number of", "SUM": "total", "AVG": "average", "MIN": "minimum",
               "MAX": "maximum", "PCT": "percentage of"}
@@ -604,7 +607,40 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
                                  join_choices)
         return ir.SetOp("INTERSECT", _select(schema, left, "a_", join_choices),
                         _select(schema, right, "b_", join_choices))
-    return _select(schema, intent, "", join_choices)
+    semi = _semi_join(schema, intent, join_choices) if SEMI_JOIN_FILTERS else None
+    return semi or _select(schema, intent, "", join_choices)
+
+
+def _semi_join(schema: Schema, intent: Intent, join_choices: dict[str, str]) -> ir.Select | None:
+    """'Which regions have stores that sold Croissants?' lists each region once.
+
+    Filtering through related records on the 'many' side of a join repeats the listed
+    records once per match; such conditions become a membership test on the listed
+    table's key instead (two different records with equal names still stay two rows)."""
+    if (intent.group_by or intent.distinct or intent.connector != "AND"
+            or any(o.is_aggregate or o.star for o in intent.outputs)
+            or any(o.is_aggregate for o in intent.order)
+            or any(c.kind in ("having", "having_vs") for c in intent.conditions)):
+        return None
+    listed = {t for o in intent.outputs for t in o.tables}
+    if len(listed) != 1:
+        return None
+    table = next(iter(listed))
+    pk = schema.table(table).primary_key
+    if len(pk) != 1:
+        return None
+    moved = [c for c in intent.conditions if c.tables and any(
+        t != table and schema.one_to_many(table, t) for t in c.tables)]
+    order_tables = {o.column.split(".", 1)[0] if o.column else o.table for o in intent.order}
+    if not moved or any(t != table and schema.one_to_many(table, t) for t in order_tables if t):
+        return None
+    key = f"{schema.table(table).name}.{pk[0]}"
+    inner = _select(schema, intent.with_(outputs=(OutputItem(None, key),), conditions=tuple(moved),
+                                         order=(), limit=None, offset=None, subject=table), "s_",
+                    join_choices)
+    outer = intent.with_(conditions=tuple(c for c in intent.conditions if c not in moved), subject=table)
+    return _select(schema, outer, "", join_choices,
+                   extra_where=lambda scope: ir.InQuery(scope.col(key), inner))
 
 
 def _lists_records(schema: Schema, intent: Intent) -> bool:

@@ -21,6 +21,7 @@ from intentsql.grounding import ground
 from intentsql.intent import Intent, PlanError, build_query
 from intentsql.interpret import Decision, Strategy, alternatives, interpret
 from intentsql.jev import Exchange, JevClient, JevError, Usage, choice, noul, shared_client
+from intentsql.render import condition as condition_text
 from intentsql.render import describe
 from intentsql.schema import load_schema
 
@@ -30,6 +31,7 @@ QUERY_TIMEOUT_S = 15.0
 PREVIEW_ROWS = 200
 LOW_CONFIDENCE = 0.2      # verification probability under which a reading is reported as uncertain
 SWITCH_MARGIN = 0.25      # an alternative replaces the main reading only by this probability margin
+SIMPLE_CONDITIONS = ("compare", "text", "between", "in_values", "null", "period")
 VERIFY_QUESTION = ("Does `interpretation` describe exactly what `request` asks for, with nothing "
                    "missing, nothing extra and the same conditions? `result` shows what it returned.")
 
@@ -170,6 +172,49 @@ def _verify(question: str, readings: list[_Reading], ask, result: Answer) -> tup
     return chosen, scores[best]
 
 
+def _nothing(rows: list[tuple[Any, ...]], intent: Intent) -> bool:
+    """No rows, or a single all-aggregate row of zeros/NULLs ('0 orders')."""
+    if not rows:
+        return True
+    return (len(rows) == 1 and all(o.is_aggregate for o in intent.outputs)
+            and all(v in (0, None) for v in rows[0]))
+
+
+def _explain_empty(schema, db_path: str | Path, intent: Intent) -> str | None:
+    """Why a query returned nothing: which condition removes every row, and for dates,
+    the range the data actually covers.  Deterministic; nothing is changed or retried."""
+    simple = [c for c in intent.conditions if c.kind in SIMPLE_CONDITIONS and c.column]
+    blocking = []
+    for cond in simple[:6]:
+        relaxed = intent.with_(conditions=tuple(c for c in intent.conditions if c is not cond), limit=None,
+                               offset=None, order=())
+        try:
+            compiled = compile_query(build_query(schema, relaxed), schema)
+            _, rows, _ = execute_read(db_path, compiled.sql, compiled.params, max_rows=1)
+        except (PlanError, CompileError, sqlite3.Error):
+            continue
+        if not _nothing(rows, relaxed):
+            blocking.append(cond)
+    if not blocking:
+        return None
+    parts = []
+    for cond in blocking:
+        text = condition_text(schema, cond, intent.subject).removeprefix("whose ").removeprefix("that ")
+        column = schema.column(cond.column)
+        span = ""
+        if column.kind == "date" and column.formula is None:
+            table = schema.table(column.table)
+            try:
+                _, rows, _ = execute_read(db_path, f'SELECT MIN("{column.name}"), MAX("{column.name}") '
+                                                   f'FROM "{table.physical}"', (), max_rows=1)
+                if rows and rows[0][0]:
+                    span = f" (the data covers {rows[0][0]} to {rows[0][1]})"
+            except sqlite3.Error:
+                pass
+        parts.append(f"{text}{span}")
+    return "No rows match. Without this condition there would be results: " + "; ".join(parts) + "."
+
+
 def answer(db_path: str | Path, question: str, *, client: JevClient | None = None,
            strategy: Strategy | None = None, execute: bool = True,
            on_event: Callable[[dict[str, Any]], None] | None = None) -> Answer:
@@ -265,6 +310,8 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
             result.message = f"SQLite rejected the query: {exc}"
             return result
         mark("execute", t)
+    if execute and result.columns and _nothing(result.rows, chosen.intent):
+        result.message = _explain_empty(grounding.schema, db_path, chosen.intent)
     if result.confidence is not None and result.confidence < LOW_CONFIDENCE:
         result.status = AMBIGUOUS
         result.message = ("This reading is uncertain. Check the interpretation"

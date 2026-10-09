@@ -7,7 +7,10 @@ read-only connections, and the SQL console rejects anything but reads.
 
 from __future__ import annotations
 
+import json
+import logging
 import math
+import queue
 import sqlite3
 import threading
 from pathlib import Path
@@ -15,13 +18,14 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from intentsql import __version__
 from intentsql.config import PROJECT_ROOT, settings
+from intentsql.examples import examples
 from intentsql.jev import reset_shared_client, shared_client
 from intentsql.pipeline import answer
 from intentsql.schema import load_schema, quote_identifier
@@ -35,6 +39,7 @@ from intentsql.workspace import (
     save_connection,
 )
 
+log = logging.getLogger("intentsql.web")
 STATIC_DIR = PROJECT_ROOT / "static"
 CONSOLE_MAX_ROWS = 500
 CONSOLE_TIMEOUT_S = 5.0
@@ -182,11 +187,46 @@ def ask(body: AskInput) -> dict[str, Any]:
     return _safe(result.to_dict(debug=True))
 
 
+@app.post("/api/ask/stream")
+def ask_stream(body: AskInput) -> StreamingResponse:
+    """The same answer as /api/ask, preceded by progress events (server-sent events)."""
+    entry = _entry(body.database)
+    if not shared_client().configured:
+        raise HTTPException(400, "No Jev API key is configured. Open Connection settings.")
+    events: queue.Queue[tuple[str, Any] | None] = queue.Queue()
+
+    def run() -> None:
+        try:
+            result = answer(entry.path, body.question, on_event=lambda e: events.put(("phase", e)))
+            events.put(("result", _safe(result.to_dict(debug=True))))
+        except Exception as exc:  # reported to the page, not raised into the worker thread
+            log.exception("ask failed")
+            events.put(("error", {"message": f"{type(exc).__name__}: {exc}"}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+
+    def stream():
+        while (item := events.get()) is not None:
+            kind, data = item
+            yield f"event: {kind}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/databases/{name}/examples")
+def database_examples(name: str) -> list[str]:
+    return examples(load_schema(_entry(name).path))
+
+
 # ---- read-only SQL console ------------------------------------------------------------
 
 class SQLInput(BaseModel):
     database: str = Field(max_length=200)
     sql: str = Field(min_length=1, max_length=20_000)
+    params: list[str | int | float | None] = Field(default_factory=list, max_length=200)
 
 
 _READ_ACTIONS = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
@@ -199,14 +239,14 @@ def _authorizer(action: int, *_: Any) -> int:
     return sqlite3.SQLITE_OK if action in _READ_ACTIONS else sqlite3.SQLITE_DENY
 
 
-def _run_console(path: Path, sql: str) -> dict[str, Any]:
+def _run_console(path: Path, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
     conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, check_same_thread=False)
     conn.text_factory = lambda b: b.decode("utf-8", errors="replace")
     timer = threading.Timer(CONSOLE_TIMEOUT_S, conn.interrupt)
     timer.start()
     try:
         conn.set_authorizer(_authorizer)
-        cursor = conn.execute(sql)
+        cursor = conn.execute(sql, params)
         columns = [d[0] for d in cursor.description or ()]
         rows = cursor.fetchmany(CONSOLE_MAX_ROWS + 1)
         return _safe({"columns": columns, "rows": [list(r) for r in rows[:CONSOLE_MAX_ROWS]],
@@ -220,4 +260,4 @@ def _run_console(path: Path, sql: str) -> dict[str, Any]:
 
 @app.post("/api/sql")
 def run_sql(body: SQLInput) -> dict[str, Any]:
-    return _run_console(_entry(body.database).path, body.sql)
+    return _run_console(_entry(body.database).path, body.sql, tuple(body.params))
