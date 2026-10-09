@@ -1311,7 +1311,23 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                     keep_empty=keep_empty, limit_per=limit_per)
     intent = rebind_equivalents(schema, intent)
     intent = _choose_routes(g, intent, answers, followup, record)
-    return Interpretation(intent, record.decisions, record.uncertain, followup=followup or None)
+    return Interpretation(intent, _effective_decisions(schema, cands, intent, record.decisions),
+                          record.uncertain, followup=followup or None)
+
+
+def _effective_decisions(schema: Schema, cands: Candidates, intent: Intent,
+                         decisions: list[Decision]) -> list[Decision]:
+    """Drop output decisions that later deterministic shaping removed from the plan, so
+    the trace shown to users describes the answer they get."""
+    shown = {k for o in intent.outputs if o.column for k in schema.equivalents(o.column)}
+    groups = {g.key: g for g in cands.outputs}
+    kept = []
+    for d in decisions:
+        group = groups.get(d.key.removeprefix("out_")) if d.key.startswith("out_") else None
+        if group is not None and not any(o.payload.column in shown for o in group.options if o.payload.column):
+            continue
+        kept.append(d)
+    return kept
 
 
 def _anti_joins(schema: Schema, conditions: list[Condition], subject: str | None) -> list[Condition]:

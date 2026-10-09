@@ -12,7 +12,7 @@ IntentSQL is a local application for querying your own SQLite databases. You ask
 
 It is built on **Jev**, TypeSafe's decision model ([what that is](https://docs.typesafe.ai/concepts/system-one)). Jev is used only for small, bounded decisions. Code inspects the database and proposes every possible column, value, relationship and operation. Jev chooses among those proposals, and code builds and validates the SQL from its choices. Jev never writes SQL and never invents a name. [ARCHITECTURE.md](ARCHITECTURE.md) explains the design.
 
-<!-- RESULTS -->
+![IntentSQL answering "Which five districts have the highest per-pupil expenditure?"](docs/images/answer-light.png)
 
 ## Quick start
 
@@ -61,7 +61,25 @@ IntentSQL reads data and never changes it. Requests to modify data are refused, 
 
 ## How good is it?
 
-<!-- EVIDENCE -->
+These numbers were measured on 2026-10-10 with `jev-latest`. They are execution accuracy: the result rows must match the reference query's rows.
+
+| Evaluation | Result |
+|---|---|
+| **Spider dev** (validation, never inspected case by case; 2 random batches of 300) | **76.8% ± 2.6** overall; easy 84.0, medium 80.6, hard 73.5, extra-hard 59.4 |
+| Confident answers on Spider dev | 86% of questions answered confidently, **86.0%** of those correct; the other 14% are flagged *uncertain* and offer alternatives |
+| Accuracy when answering only the most confident questions (dev) | 88.3% at 80% coverage, 91.7% at 70%, 94.9% at 50% |
+| Spider train (development; fresh random samples) | 74–79% per batch of 300 |
+| Capability suite (`features.json`, development) | 92.9% of 56 cases |
+| Adversarial suite (`adversarial.json`, development) | 95.4% of 65 cases; 5 of 6 unsupported requests refused, no false refusals |
+| Cost per question | 2.0 Jev calls, about 8,200 input tokens; latency p50 0.58 s, p95 0.81 s |
+| For comparison: the Alpha this replaced | 33.8% on a random Spider train sample, 0% on hard and extra-hard |
+
+**Not yet measured.** The frozen held-out suite (`holdout.json`, on a schema never used during development) and the Spider test milestone could not be run: the TypeSafe account ran out of API credits during the final assessment. [docs/EVALUATION.md](docs/EVALUATION.md) gives the exact commands.
+
+What the numbers mean:
+- About one answer in eight that IntentSQL presents as confident is wrong on Spider. Always read the "IntentSQL understood" line.
+- Most remaining errors involve the choice of output column or grouping key, or Spider's own conventions (whether to show the ranked value, DISTINCT, and gold-query mistakes). Some readings are genuinely ambiguous.
+- Extra-hard questions (unions and intersections of differently aggregated subqueries, deep nesting) remain the weakest area.
 
 The evaluation protocol is in [docs/EVALUATION.md](docs/EVALUATION.md): which data was used for development, which was held out, and how scores are computed. The experiments behind the design, including the ones that failed, are in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 

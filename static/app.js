@@ -301,7 +301,8 @@ function readings(result) {
 
 function showAnswer(result) {
   state.result = result; state.sort = null;
-  state.reading = readings(result)[0];
+  state.readings = readings(result);
+  state.reading = state.readings[0];
   $("#answer").hidden = false;
   $("#answer-title").textContent = result.question || question.value.trim();
   const [tone, label] = (CONFIDENCE[result.status] || CONFIDENCE.error)(result.confidence);
@@ -378,7 +379,7 @@ function renderResult(reading) {
 }
 
 function renderAlternatives() {
-  const options = readings(state.result || {});
+  const options = state.readings || [];
   const box = $("#alternatives");
   box.hidden = options.length < 2;
   if (box.hidden) return;
@@ -387,7 +388,7 @@ function renderAlternatives() {
     r === state.reading
       ? el("span", { class: "muted small", text: "shown" })
       : el("button", { class: "button ghost small", type: "button", text: "Show this", onclick: () => switchReading(r) }))));
-  if (options.length >= 2) $("#alternatives .eyebrow").textContent = state.reading.main ? "Other possible readings" : "Readings";
+  if (options.length >= 2) $("#alternatives .eyebrow").textContent = "Possible readings of the question";
 }
 
 async function switchReading(reading) {
@@ -443,7 +444,8 @@ function renderHow() {
   for (const [k, v] of items) dl.append(el("dt", { text: k }), el("dd", { text: v }));
   body.append(dl);
   const decisions = (result.decisions || []).filter((d) => (d.purpose !== "verification" || d.key === "verify")
-    && !(d.key === "scope" && d.selected === "read") && d.selected !== null && d.selected !== undefined);
+    && !(d.key === "scope" && d.selected === "read") && d.selected !== null && d.selected !== undefined
+    && (developer() || d.purpose !== "literal role"));
   if (decisions.length) {
     body.append(el("p", { class: "eyebrow", text: "Decisions" }));
     body.append(el("ul", { class: "decisions" }, decisions.map((d) => {

@@ -1,6 +1,6 @@
 # v1 audit: what the Alpha was, what it measured, what changes
 
-Written at the start of the v1 rework (2026-10-09), before any runtime code was changed.
+Written at the start of the v1 rework (2026-10-09), before any runtime code was changed. This is a historical record; the current design is in [ARCHITECTURE.md](../ARCHITECTURE.md) and current measurements are in the README.
 
 ## Sources examined
 

@@ -60,8 +60,8 @@ def _label(schema: Schema, key: str, subject: str | None) -> str:
     if column.table == subject:
         return column.label
     owner = entity(schema, column.table)
-    if column.label.startswith(owner):
-        return column.label
+    if column.label.startswith(owner) or set(owner.split()) <= {lemma(w) for w in column.label.split()}:
+        return column.label          # 'per pupil expenditure', not 'expenditure per pupil expenditure'
     return f"{owner} {column.label}"
 
 
