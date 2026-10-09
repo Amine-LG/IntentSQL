@@ -2,3 +2,5 @@
 httpx==0.28.1
 httpx2==2.13.1
 playwright==1.63.0
+sqlglot==30.22.0
+pytest
