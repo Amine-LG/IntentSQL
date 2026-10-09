@@ -312,7 +312,7 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
         # the overall number of counted records per subject record.
         counter[0] += 1
         prefix = f"q{counter[0]}_"
-        counted, _ = _from(schema, [cond.table], cond.table, prefix + "c", join_choices)
+        counted, _ = _from(schema, [cond.table or ""], cond.table or "", prefix + "c", join_choices)
         subjects, _ = _from(schema, [cond.values[0]], cond.values[0], prefix + "s", join_choices)
         per_subject = ir.BinOp("/", ir.ScalarQuery(ir.Select((ir.SelectItem(ir.Agg("COUNT", ir.Star())),),
                                                              counted)),
