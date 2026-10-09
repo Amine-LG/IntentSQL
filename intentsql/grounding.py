@@ -12,6 +12,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -183,6 +184,15 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
             continue
         matches = index.exact.get(_normalize(text), ()) or tuple(_probe_large_columns(schema, text))
         stored = matches[0][1] if matches else text
+        parts = None if matches else _name_parts(index, question, match.start(1) if match.group(1)
+                                                 else match.start(), match.end(1) if match.group(1)
+                                                 else match.end())
+        if parts:
+            for part_start, part_end, part_matches in parts:
+                add(question[part_start:part_end], part_matches[0][1], "text", part_start, part_end,
+                    part_matches, quoted=True, exact=True)
+            taken.append((match.start(), match.end()))
+            continue
         if _NUMBER.fullmatch(text.strip()) and not matches:
             add(text, _parse_number(text.strip()), "number", match.start(), match.end(), quoted=True)
         else:
@@ -293,7 +303,13 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
         if lemma(surface.lower()) in schema_words and " " not in surface:
             continue
         fuzzy = _fuzzy(index, surface) or _probe_large_columns(schema, surface)
-        if fuzzy:
+        parts = _name_parts(index, question, start, end) if not fuzzy else None
+        if parts:
+            # 'Linda Smith' stored as first name 'Linda' and last name 'Smith'.
+            for part_start, part_end, matches in parts:
+                part = question[part_start:part_end]
+                add(part, matches[0][1], "text", part_start, part_end, matches, exact=True)
+        elif fuzzy:
             add(surface, fuzzy[0][1], "text", start, end, fuzzy)
         elif not _names_schema(surface, schema_words):
             # A proper noun the database does not contain ('from Brazil') is still a
@@ -378,6 +394,29 @@ def periods(question: str, today: date | None = None) -> list[tuple[int, int, st
 def _fields(lit: Literal) -> tuple:
     return (lit.id, lit.text, lit.value, lit.kind, lit.start, lit.end, lit.columns, lit.exact,
             lit.quoted, lit.alternatives)
+
+
+def _name_parts(index: ValueIndex, question: str, start: int, end: int
+                ) -> list[tuple[int, int, tuple[tuple[str, str], ...]]] | None:
+    """Each word of a multi-word span found in a different column of one table."""
+    words = [(m.start() + start, m.end() + start) for m in re.finditer(r"\S+", question[start:end])]
+    if len(words) < 2:
+        return None
+    found = []
+    for a, b in words:
+        matches = index.exact.get(_normalize(question[a:b]))
+        if not matches:
+            return None
+        found.append((a, b, matches))
+    for table in {key.split(".")[0] for key, _ in found[0][2]}:
+        columns = [{k for k, _ in m if k.split(".")[0] == table} for _, _, m in found]
+        if not all(columns):
+            continue
+        for assignment in product(*[sorted(c) for c in columns]):
+            if len(set(assignment)) == len(assignment):       # one column per word
+                return [(a, b, tuple(m for m in matches if m[0] == column))
+                        for (a, b, matches), column in zip(found, assignment)]
+    return None
 
 
 def _one_is_pronoun(question: str, token: Token) -> bool:

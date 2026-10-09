@@ -1079,6 +1079,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         else:
             conditions.append(condition)
         literal_conditions.append((lit, condition))
+    conditions, excluded = _but_not(g, conditions, excluded, literal_conditions)
     conditions = _join_name_parts(g, conditions, literal_conditions)
     excluded = _join_name_parts(g, excluded, literal_conditions)
 
@@ -1194,6 +1195,8 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                    f"{entity(schema, rel_subject)} that has a {entity(schema, target)}", answer, "has")
             conditions.append(Condition("related", None, table=target))
         else:
+            if excluded:
+                continue        # the exclusion already says which related records are absent
             record(f"rel_{key}", "relationship",
                    f"{entity(schema, rel_subject)} that has no {entity(schema, target)}", answer, "lacks")
             far = _far_side(schema, rel_subject, target)
@@ -1343,13 +1346,32 @@ def _stated_flag(g: Grounding, key: str, options: list[Option], answer: Answer) 
     return Answer("choice", choice, {choice: 0.75, "none": answer.probabilities.get("none", 0.25)}, answer.confidence)
 
 
+BUT_NOT = re.compile(r"^\W*(?:but|and|,)?\s*(?:not|never|no)\b|^\W*(?:except|excluding|without|rather than)\b",
+                     re.I)
+
+
+def _but_not(g: Grounding, conditions: list[Condition], excluded: list[Condition],
+             literal_conditions: list[tuple[Literal, Condition]]
+             ) -> tuple[list[Condition], list[Condition]]:
+    """'students allergic to milk but not cat': the second value of the same attribute
+    is excluded (results having it are removed), not a second filter."""
+    for (a, ca), (b, cb) in zip(literal_conditions, literal_conditions[1:]):
+        if (ca in conditions and cb in conditions and ca.column and cb.column and ca.kind == cb.kind
+                and g.schema.canonical(ca.column) == g.schema.canonical(cb.column)
+                and BUT_NOT.search(g.question[a.end:b.start].replace("the ", ""))):
+            conditions = [c for c in conditions if c is not cb]
+            excluded = excluded + [_positive(cb)]
+    return conditions, excluded
+
+
 def _join_name_parts(g: Grounding, conditions: list[Condition],
                      literal_conditions: list[tuple[Literal, Condition]]) -> list[Condition]:
-    """'Michael Goodrich' grounded as first name 'Michael' and last name 'Goodrich': two
-    adjacent values on two columns of one table describe one record."""
+    """'Michael Goodrich' grounded as first name 'Michael' and last name 'Goodrich', or
+    'the Fall of 2009' as semester and year: adjacent values on two columns of one table
+    describe one record."""
     out = list(conditions)
     for (a, ca), (b, cb) in zip(literal_conditions, literal_conditions[1:]):
-        if (ca in out and cb in out and g.question[a.end:b.start].strip() == ""
+        if (ca in out and cb in out and re.fullmatch(r"\s*(?:of|in|,|-)?\s*", g.question[a.end:b.start], re.I)
                 and ca.kind == cb.kind == "compare" and ca.op == cb.op == "="
                 and ca.column and cb.column and ca.column != cb.column
                 and ca.column.split(".")[0] == cb.column.split(".")[0]):

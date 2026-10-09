@@ -82,6 +82,20 @@ class LiteralTest(unittest.TestCase):
             found = extract_literals("Where is McDonald's located?", load_schema(path))
             self.assertEqual([(lit.text, lit.value) for lit in found], [("McDonald's", "McDonald's")])
 
+    def test_full_name_split_across_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "n.sqlite"
+            with sqlite3.connect(path) as conn:
+                conn.executescript("CREATE TABLE student (id INTEGER PRIMARY KEY, fname TEXT, lname TEXT);"
+                                   "INSERT INTO student VALUES (1, 'Linda', 'Smith'), (2, 'Tom', 'Linda');")
+            schema = load_schema(path)
+            for question in ('How many clubs does Linda Smith belong to?',
+                             'How many clubs does "Linda Smith" belong to?'):
+                found = [(lit.text, lit.columns) for lit in extract_literals(question, schema)]
+                self.assertEqual([text for text, _ in found], ["Linda", "Smith"])
+                self.assertIn("student.fname", found[0][1])
+                self.assertEqual(found[1][1], ("student.lname",))
+
     def test_grounding_links_and_positions(self):
         g = ground("What is the price of products in the coffee category?", self.schema)
         self.assertGreater(g.column_link["products.price"], 0)

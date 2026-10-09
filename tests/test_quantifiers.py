@@ -16,6 +16,10 @@ DDL = """
 CREATE TABLE film (id INTEGER PRIMARY KEY, title TEXT, studio TEXT, director TEXT, minutes INTEGER);
 CREATE TABLE weather (day TEXT, zip_code INTEGER, max_dew_point INTEGER);
 CREATE TABLE wine (id INTEGER PRIMARY KEY, name TEXT, year INTEGER, price REAL);
+CREATE TABLE section (id INTEGER PRIMARY KEY, course TEXT, semester TEXT, year INTEGER);
+INSERT INTO section VALUES (1,'C1','Fall',2009),(2,'C2','Spring',2009),(3,'C3','Spring',2010),(4,'C4','Fall',2010);
+CREATE TABLE allergy (student TEXT, allergen TEXT);
+INSERT INTO allergy VALUES ('Al','Milk'),('Al','Cat'),('Ed','Milk'),('Cy','Cat');
 CREATE TABLE staff (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT);
 CREATE TABLE problem (id INTEGER PRIMARY KEY, product TEXT, reported_by INTEGER REFERENCES staff(id));
 INSERT INTO staff VALUES (1,'Mia','Ross'),(2,'Bo','Kim'),(3,'Mia','Kim');
@@ -109,6 +113,22 @@ class QuantifierTest(unittest.TestCase):
         # Either person: Mia Kim (first name of one, last name of the other) must not match.
         result = self.ask("Which products had problems reported by Mia Ross or Bo Kim?", self.NAME_RULES)
         self.assertEqual(rows(result), [("W",), ("X",), ("X",), ("Y",)])
+
+    def test_value_but_not_value(self):
+        result = self.ask("Which students are allergic to Milk but not Cat?", [
+            ("^out_", "allergy student in", "itself"),
+            ("^role_", "", "filtered by"),
+            ("^lop_", "", "exactly this value")])
+        self.assertEqual(rows(result), [("Ed",)])
+
+    def test_semester_of_year_pairs(self):
+        result = self.ask("Which courses ran in the Fall of 2009 or the Spring of 2010?", [
+            ("^out_", "section course in", "itself"),
+            ("^role_", "", "filtered by|compared"),
+            ("^lcol_", r"\[2009\]|\[2010\]", "section year"),
+            ("^lop_", r"\[2009\]|\[2010\]", "^equal"),
+            ("^lop_", "", "exactly this value")])
+        self.assertEqual(rows(result), [("C1",), ("C3",)])
 
     def test_both_people(self):
         result = self.ask("Which products had problems reported by both Mia Ross and Bo Kim?", self.NAME_RULES)
