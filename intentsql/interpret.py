@@ -24,7 +24,7 @@ from intentsql.grounding import Grounding, Literal
 from intentsql.intent import Condition, Intent, Ordering, OutputItem, _negate, column_phrase, entity
 from intentsql.jev import Answer, Question, choice, noul
 from intentsql.schema import BOOLEAN, DATE, NUMBER, TEXT, Column, Schema, flag_values
-from intentsql.text import ORDINALS
+from intentsql.text import ORDINALS, lemma
 
 NUMERIC_OPS = {"=": "equal to", ">": "greater than (more, over, above, older, larger)",
                "<": "less than (fewer, under, below, younger, smaller)",
@@ -813,6 +813,13 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
         phrase = column_phrase(schema, key)
         opts = {o.key: o.text for o in options}
         opts["none"] = f"no restriction on {phrase}"
+        if flag_values(schema.values.get(key, ())):
+            label = schema.column(key).label
+            opts["none"] = f"neither: being {label} or not is not part of `request`"
+            q[f"cat_{key}"] = choice(
+                f"Does `request` say whether the {entity(schema, schema.column(key).table)} records "
+                f"involved are {label}? Choose an option only when the request says so.", opts)
+            continue
         q[f"cat_{key}"] = choice(
             f"Does `request` itself restrict the results to one particular {phrase}? "
             "Choose a value only when the request states that restriction.", opts)
@@ -989,6 +996,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     excluded: list[Condition] = []
     subset: list[Condition] = []         # conditions on the records an aggregate is computed over
     literal_conditions: list[tuple[Literal, Condition]] = []
+    denied_flags: list[tuple[Condition, Condition]] = []
     limit: int | None = None
     for lit_id, slots in cands.literals.items():
         lit = slots.literal
@@ -1077,14 +1085,20 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     # -- implicit categorical values (unless a literal already restricts that column)
     restricted = {schema.canonical(c.column) for c in conditions + excluded + subset if c.column}
     for key, options in cands.categorical.items():
-        answer = answers[f"cat_{key}"]
+        answer = _stated_flag(g, key, options, answers[f"cat_{key}"])
         if answer.choice == "none" or answer.top_probability < strategy.categorical_threshold:
             continue
         if schema.canonical(key) in restricted:
             continue
         option = _pick(options, answer)
         record(f"cat_{key}", "implicit value", option.text, answer, option.payload)
-        conditions.append(Condition("compare", key, "=", (option.payload,)))
+        condition = Condition("compare", key, "=", (option.payload,))
+        conditions.append(condition)
+        flag = flag_values(schema.values.get(key, ()))
+        word = schema.column(key).label.split()[0]
+        if flag and option.payload == flag[1] and re.search(
+                rf"\b(no|without|zero|never \w+(?: any)?)\s+(?:any\s+)?{re.escape(word)}", g.question, re.I):
+            denied_flags.append((condition, Condition("compare", key, "=", (flag[0],))))
 
     # -- missing / present values
     if "nulls" in answers and answers["nulls"].choice != "none":
@@ -1189,6 +1203,13 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             conditions.append(Condition("absent", None, table=target, inner=tuple(inner)))
             subject = rel_subject
 
+    for condition, positive in denied_flags:
+        # 'suppliers with no discontinued products': no related product is discontinued
+        # (not 'has a product that is not discontinued').
+        table = condition.column.split(".")[0] if condition.column else None
+        if condition in conditions and subject and table and table != subject and schema.one_to_many(subject, table):
+            conditions = [c for c in conditions if c is not condition]
+            conditions.append(Condition("absent", None, table=table, inner=(positive,)))
     conditions = _anti_joins(schema, conditions, subject)
     conditions = _dedupe_absent(schema, conditions, answers, cands, excluded)
     conditions = _drop_redundant_absent(schema, conditions, subject)
@@ -1293,6 +1314,22 @@ def _anti_joins(schema: Schema, conditions: list[Condition], subject: str | None
         else:
             out.append(c)
     return out
+
+
+def _stated_flag(g: Grounding, key: str, options: list[Option], answer: Answer) -> Answer:
+    """A flag the request states as a predicate ('products that are discontinued',
+    'discontinued products') restricts the results even when Jev hesitates between the
+    flag and no restriction; the request's own wording decides between yes and no."""
+    if (len(options) != 2 or answer.choice != "none" or answer.probabilities.get("none", 1) > 0.7
+            or not flag_values(g.schema.values.get(key, ()))):
+        return answer
+    word = re.escape(g.schema.column(key).label.split()[0])
+    noun = re.escape(lemma(entity(g.schema, g.schema.column(key).table).split()[-1]))
+    stated = re.search(rf"\b(?:is|are|was|were|be|been)\s+(not\s+)?{word}\b|\b(non-?|not\s+)?{word}\s+{noun}", g.question, re.I)
+    if not stated:
+        return answer
+    choice = options[1].key if (stated.group(1) or stated.group(2)) else options[0].key
+    return Answer("choice", choice, {choice: 0.75, "none": answer.probabilities.get("none", 0.25)}, answer.confidence)
 
 
 def _join_name_parts(g: Grounding, conditions: list[Condition],

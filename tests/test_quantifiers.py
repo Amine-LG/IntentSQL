@@ -115,5 +115,33 @@ class QuantifierTest(unittest.TestCase):
         self.assertEqual(rows(result), [("X",)])
 
 
+class FlagTest(unittest.TestCase):
+    """Two-valued flags (retail fixture: products.discontinued is 0/1)."""
+
+    DB = Path(__file__).resolve().parents[1] / "benchmarks" / "fixtures" / "retail.sqlite"
+
+    def test_no_flagged_related_records_is_an_anti_join(self):
+        result = answer(self.DB, "Which suppliers have no discontinued products?", client=ScriptedJev([
+            ("^out_", "show the supplier name in", "itself"),
+            ("^cat_products.discontinued$", "", "not discontinued")]))
+        self.assertEqual(result.status, ANSWERED, result.message)
+        with sqlite3.connect(self.DB) as conn:
+            gold = conn.execute("SELECT name FROM suppliers WHERE id NOT IN "
+                                "(SELECT supplier_id FROM products WHERE discontinued = 1)").fetchall()
+        self.assertEqual(rows(result), sorted(gold))
+
+    def test_flag_stated_as_a_predicate(self):
+        from intentsql.grounding import ground
+        from intentsql.interpret import Option, _stated_flag
+        from intentsql.jev import Answer
+        from intentsql.schema import load_schema
+        g = ground("List products that are discontinued or cost more than 100.", load_schema(self.DB))
+        options = [Option("v0", "discontinued", "1"), Option("v1", "not discontinued", "0")]
+        hesitant = Answer("choice", "none", {"v0": 0.47, "v1": 0.0, "none": 0.53})
+        self.assertEqual(_stated_flag(g, "products.discontinued", options, hesitant).choice, "v0")
+        sure = Answer("choice", "none", {"v0": 0.1, "v1": 0.0, "none": 0.9})
+        self.assertEqual(_stated_flag(g, "products.discontinued", options, sure).choice, "none")
+
+
 if __name__ == "__main__":
     unittest.main()
