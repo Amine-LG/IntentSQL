@@ -352,7 +352,8 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
             if target in tables:
                 cands.relations.append((f"r{len(cands.relations)}", subject, target))
 
-    if AGG_COMPARE_CUE.search(g.question) and COMPARATIVE_CUE.search(g.question):
+    compared_with_subset = any(_after_than(g.question, lit) for lit in g.literals)
+    if (AGG_COMPARE_CUE.search(g.question) or compared_with_subset) and COMPARATIVE_CUE.search(g.question):
         for column in columns:
             if column.is_numeric and not column.is_identifier:
                 phrase = column_phrase(schema, column.key)
@@ -583,6 +584,17 @@ def literal_context(question: str, lit: Literal, before: int = 4, after: int = 3
     return " ".join(left + [f"[{question[lit.start:lit.end]}]"] + right)
 
 
+_THAN = re.compile(r"\bthan\s+(?:that of\s+|those of\s+)?(?:some|any|all|every|each|the|a|an)?\s*"
+                   r"(?:\w+\s+){0,7}$", re.I)
+
+
+def _after_than(question: str, lit: Literal) -> bool:
+    """'a higher resolution than English songs', 'longer than some drivers in race 841':
+    a value describing the records compared against, a few words after 'than'."""
+    before = question[max(0, lit.start - 60):lit.start]
+    return bool(_THAN.search(before)) and not (lit.kind == "number" and re.search(r"\bthan\s*$", before, re.I))
+
+
 SUBSET_ROLE = Option("subset", "it describes the other records that results are compared "
                                 "against, not the results (e.g. 'more expensive than any wine from "
                                 "2006', 'older than every engineer')", "subset")
@@ -631,7 +643,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
             roles.append(Option("reference", "it identifies one particular record, and results must "
                                              "share an attribute with that record (e.g. 'in the same "
                                              "department as Clara')", "reference"))
-        if QUANTIFIED_CUE.search(g.question):
+        if QUANTIFIED_CUE.search(g.question) or _after_than(g.question, lit):
             roles.append(SUBSET_ROLE)
         roles.append(Option("other", "not a filter value (e.g. part of a table or column name, "
                                      "or a word used in another sense)", None))
@@ -653,7 +665,8 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
                  Option("group_total", "a threshold on a total or average computed per group "
                                        "(e.g. 'whose total sales exceed 1000')", "group_total"),
                  Option("limit", "how many results to return (e.g. 'top 5', 'the 3 largest')", "limit"),
-                 *([SUBSET_ROLE] if QUANTIFIED_CUE.search(g.question) else []),
+                 *([SUBSET_ROLE] if QUANTIFIED_CUE.search(g.question) or _after_than(g.question, lit)
+                   else []),
                  Option("other", "none of these (e.g. part of a name, an identifier inside text, "
                                  "or a column name such as '200 meters')", None)]
         ops = NUMERIC_OPS
@@ -975,6 +988,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     conditions: list[Condition] = []
     excluded: list[Condition] = []
     subset: list[Condition] = []         # conditions on the records an aggregate is computed over
+    literal_conditions: list[tuple[Literal, Condition]] = []
     limit: int | None = None
     for lit_id, slots in cands.literals.items():
         lit = slots.literal
@@ -1056,6 +1070,9 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             excluded.append(_positive(condition))
         else:
             conditions.append(condition)
+        literal_conditions.append((lit, condition))
+    conditions = _join_name_parts(g, conditions, literal_conditions)
+    excluded = _join_name_parts(g, excluded, literal_conditions)
 
     # -- implicit categorical values (unless a literal already restricts that column)
     restricted = {schema.canonical(c.column) for c in conditions + excluded + subset if c.column}
@@ -1275,6 +1292,22 @@ def _anti_joins(schema: Schema, conditions: list[Condition], subject: str | None
             out.append(Condition("absent", None, table=table, inner=(_positive(c),)))
         else:
             out.append(c)
+    return out
+
+
+def _join_name_parts(g: Grounding, conditions: list[Condition],
+                     literal_conditions: list[tuple[Literal, Condition]]) -> list[Condition]:
+    """'Michael Goodrich' grounded as first name 'Michael' and last name 'Goodrich': two
+    adjacent values on two columns of one table describe one record."""
+    out = list(conditions)
+    for (a, ca), (b, cb) in zip(literal_conditions, literal_conditions[1:]):
+        if (ca in out and cb in out and g.question[a.end:b.start].strip() == ""
+                and ca.kind == cb.kind == "compare" and ca.op == cb.op == "="
+                and ca.column and cb.column and ca.column != cb.column
+                and ca.column.split(".")[0] == cb.column.split(".")[0]):
+            position = out.index(ca)
+            out = [c for c in out if c not in (ca, cb)]
+            out.insert(position, Condition("all", inner=(ca, cb)))
     return out
 
 
@@ -1672,6 +1705,20 @@ def _normalize_conditions(g: Grounding, conditions: list[Condition], connector: 
             others = [c for c in conditions if c not in conds]
             merged = Condition("in_values", conds[0].column, values=tuple(c.values[0] for c in conds))
             conditions = others + [merged]
+    compounds: dict[tuple[str, ...], list[Condition]] = {}
+    for c in conditions:
+        if c.kind == "all":
+            compounds.setdefault(tuple(sorted(g.schema.canonical(i.column or "") for i in c.inner)), []).append(c)
+    for pair in compounds.values():
+        if len(pair) != 2 or both is not None:
+            continue
+        first, second = pair
+        between = _text_between(g, first.inner[-1].values[0], second.inner[0].values[0])
+        if between is not None and re.search(r"\bor\b", between, re.I):
+            # 'reported by Dameon Frami or Jolie Weber': either person.
+            conditions = [c for c in conditions if c not in pair] + [Condition("any", inner=(first, second))]
+        elif between is not None and (BOTH_CUE.search(g.question) or connector == "AND"):
+            both = (conditions.index(first), conditions.index(second))
     if both is None and connector == "AND":
         both = _disjoint_ranges(g.schema, conditions)
     return conditions, connector, both

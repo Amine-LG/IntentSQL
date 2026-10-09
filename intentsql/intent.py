@@ -76,6 +76,7 @@ class Condition:
     vs_aggregate column op func(column) over the rows of its table (those matching ``inner``)
     having       func(column or COUNT(*) of table) op values[0], per group
     columns      column op values[0], where values[0] is another column key ('support < oppose')
+    all / any    every / at least one of ``inner`` (one record: first and last name of a person)
     """
     kind: str
     column: str | None = None
@@ -88,6 +89,8 @@ class Condition:
 
     @property
     def tables(self) -> tuple[str, ...]:
+        if self.kind in ("all", "any"):
+            return tuple(dict.fromkeys(t for c in self.inner for t in c.tables))
         if self.kind == "absent":
             return ()
         if self.kind == "related":
@@ -338,6 +341,9 @@ def _agg_expr(scope: _Scope, func: str | None, column: str | None, table: str | 
 
 def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int],
                join_choices: dict[str, str]) -> ir.Cond:
+    if cond.kind in ("all", "any"):
+        parts = tuple(_condition(schema, scope, c, counter, join_choices) for c in cond.inner)
+        return ir.And(parts) if cond.kind == "all" else ir.Or(parts)
     if cond.kind == "compare":
         value = cond.values[0]
         if schema.column(cond.column).kind == DATE and _is_year(value):

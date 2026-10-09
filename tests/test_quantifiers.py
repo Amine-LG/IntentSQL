@@ -16,6 +16,10 @@ DDL = """
 CREATE TABLE film (id INTEGER PRIMARY KEY, title TEXT, studio TEXT, director TEXT, minutes INTEGER);
 CREATE TABLE weather (day TEXT, zip_code INTEGER, max_dew_point INTEGER);
 CREATE TABLE wine (id INTEGER PRIMARY KEY, name TEXT, year INTEGER, price REAL);
+CREATE TABLE staff (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT);
+CREATE TABLE problem (id INTEGER PRIMARY KEY, product TEXT, reported_by INTEGER REFERENCES staff(id));
+INSERT INTO staff VALUES (1,'Mia','Ross'),(2,'Bo','Kim'),(3,'Mia','Kim');
+INSERT INTO problem VALUES (1,'X',1),(2,'X',2),(3,'Y',1),(4,'Z',3),(5,'W',2);
 INSERT INTO film VALUES (1,'A','Paramount','Walter Hill',100),(2,'B','Paramount','John Ford',170),
   (3,'C','Fox','John Ford',80),(4,'D','Fox','Ann Lee',155),(5,'E','MGM','Walter Hill',120),
   (6,'F','MGM','John Ford',160),(7,'G','Fox','Ann Lee',85);
@@ -95,6 +99,20 @@ class QuantifierTest(unittest.TestCase):
             ("^lop_", r"\[90\]", "^less than")])
         self.assertEqual(rows(result), [("Fox",)])
         self.assertIn("INTERSECT", result.sql)
+
+
+    NAME_RULES = [("^out_", "problem product in", "itself"),
+                  ("^role_", "", "filtered by"),
+                  ("^lop_", "", "exactly this value")]
+
+    def test_full_names_are_one_record_each(self):
+        # Either person: Mia Kim (first name of one, last name of the other) must not match.
+        result = self.ask("Which products had problems reported by Mia Ross or Bo Kim?", self.NAME_RULES)
+        self.assertEqual(rows(result), [("W",), ("X",), ("X",), ("Y",)])
+
+    def test_both_people(self):
+        result = self.ask("Which products had problems reported by both Mia Ross and Bo Kim?", self.NAME_RULES)
+        self.assertEqual(rows(result), [("X",)])
 
 
 if __name__ == "__main__":

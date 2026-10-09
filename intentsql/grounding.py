@@ -243,7 +243,9 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
                 word = tokens[i].text
                 # Short or ordinary words only count when written like a value, or right
                 # after the name of the column that stores them ('with code x').
-                if len(word) <= 2 and not word.isupper() and not word.isdigit() and not (
+                in_name = i > 0 and word[:1].isupper() and any(
+                    0 <= n < len(tokens) and tokens[n].text[:1].isupper() for n in (i - 1, i + 1))
+                if len(word) <= 2 and not word.isupper() and not word.isdigit() and not in_name and not (
                         i > 0 and any(schema.column(k).label.split()[-1] == lemma(tokens[i - 1].text)
                                       for k, _ in matches)):
                     continue
