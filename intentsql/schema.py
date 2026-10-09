@@ -151,7 +151,9 @@ class Schema:
         for column in extra:
             table = tables[column.table]
             tables[column.table] = replace(table, columns=table.columns + (column,))
-        return Schema(self.path, tables, self.foreign_keys, self.values)
+        copy = Schema(self.path, tables, self.foreign_keys, self.values)
+        copy.__dict__["soft_edges"] = self.soft_edges      # derived columns never join
+        return copy
 
     def requires(self, key: str) -> tuple[str, ...]:
         """Tables a column needs in scope: its own, plus the operands' for a derived measure."""
@@ -182,7 +184,8 @@ class Schema:
             for b in names[i + 1:]:
                 if any(fk.other(a) == b for fk in self.foreign_keys if a in (fk.table, fk.ref_table)):
                     continue
-                for col in sorted(self.tables[a].columns, key=lambda c: not c.is_identifier):
+                pairs = []
+                for col in self.tables[a].columns:
                     if col.name.lower() in _GENERIC_NAMES or col.kind in (DATE, BOOLEAN):
                         continue
                     try:
@@ -190,9 +193,30 @@ class Schema:
                     except KeyError:
                         continue
                     if other.kind == col.kind:
-                        edges.append(ForeignKey(a, (col.name,), b, (other.name,), declared=False))
-                        break
+                        pairs.append((col, other))
+                if pairs:
+                    # Prefer the pair whose values actually match (list.classroom ->
+                    # teachers.classroom), not merely the same name (last_name).
+                    col, other = max(pairs, key=lambda pair: (self._overlap(*pair), pair[0].is_identifier))
+                    edges.append(ForeignKey(a, (col.name,), b, (other.name,), declared=False))
         return tuple(edges)
+
+    def _overlap(self, a: Column, b: Column) -> float:
+        """Share of a's distinct values found in b (0 when the database cannot be read)."""
+        if not self.path or not Path(self.path).is_file():
+            return 0.0
+        conn = sqlite3.connect(Path(self.path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            ta, ca = quote_identifier(a.table), quote_identifier(a.name)
+            tb, cb = quote_identifier(b.table), quote_identifier(b.name)
+            total, found = conn.execute(
+                f"SELECT COUNT(DISTINCT {ca}), COUNT(DISTINCT CASE WHEN {ca} IN "
+                f"(SELECT {cb} FROM {tb}) THEN {ca} END) FROM (SELECT {ca} FROM {ta} LIMIT 2000)").fetchone()
+            return found / total if total else 0.0
+        except sqlite3.Error:
+            return 0.0
+        finally:
+            conn.close()
 
     def unique_like(self, key: str) -> bool:
         """True when a column identifies its table's rows: a single-column primary key, a
@@ -207,6 +231,13 @@ class Schema:
         if column.kind == TEXT and re.search(r"\b(name|title)\b", column.label):
             return column.distinct_count >= 0.9 * table.row_count
         return table.row_count >= UNIQUE_MIN_ROWS and column.distinct_count >= 0.9 * table.row_count
+
+    def is_subtype(self, table: str, of: str) -> bool:
+        """gymnast(gymnast_id -> people.people_id): every row is one row of ``of``."""
+        pk = self.tables[table].primary_key
+        return len(pk) == 1 and any(
+            fk.table == table and fk.columns == pk and fk.ref_table == of
+            and fk.ref_columns == self.tables[of].primary_key for fk in self.foreign_keys)
 
     def is_role(self, table: str) -> bool:
         return self.tables[table].role_of is not None

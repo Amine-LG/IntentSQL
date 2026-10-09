@@ -58,6 +58,7 @@ class Grounding:
     column_link: dict[str, float] = field(default_factory=dict)
     table_link: dict[str, float] = field(default_factory=dict)
     mention_position: dict[str, int] = field(default_factory=dict)
+    table_named: dict[str, float] = field(default_factory=dict)   # lexical links only (no literal boost)
 
     def literal(self, literal_id: str) -> Literal:
         for literal in self.literals:
@@ -499,6 +500,7 @@ def link_scores(question: str, schema: Schema) -> tuple[dict[str, float], dict[s
 
 def ground(question: str, schema: Schema) -> Grounding:
     columns, tables, mention = link_scores(question, schema)
+    named = dict(tables)
     literals = extract_literals(question, schema)     # stored values: the shared base schema
     measures = derive(question, schema, columns, mention)
     if measures:
@@ -516,4 +518,4 @@ def ground(question: str, schema: Schema) -> Grounding:
             table = key.split(".", 1)[0]
             tables[table] = max(tables.get(table, 0.0), 0.5)
             mention.setdefault(key, literal.start)
-    return Grounding(question, schema, tokenize(question), literals, columns, tables, mention)
+    return Grounding(question, schema, tokenize(question), literals, columns, tables, mention, named)

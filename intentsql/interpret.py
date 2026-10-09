@@ -1185,7 +1185,10 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         if rel_subject not in output_tables and rel_subject != subject:
             continue
         if answer.choice == "has":
-            if answer.top_probability < strategy.related_threshold:
+            # A table the request names outright ('patients who have made appointments')
+            # needs less certainty than one only implied.
+            named = g.table_named.get(target, 0) >= 1.0
+            if answer.top_probability < (0.5 if named else strategy.related_threshold):
                 continue
             record(f"rel_{key}", "relationship",
                    f"{entity(schema, rel_subject)} that has a {entity(schema, target)}", answer, "has")
@@ -1210,6 +1213,13 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         if condition in conditions and subject and table and table != subject and schema.one_to_many(subject, table):
             conditions = [c for c in conditions if c is not condition]
             conditions.append(Condition("absent", None, table=table, inner=(positive,)))
+    if subject:
+        # 'the names of gymnasts': gymnast rows are people rows; naming the subtype restricts.
+        used = output_tables | {t for c in conditions for t in c.tables} | {
+            c.table for c in conditions if c.table}
+        for table, link in g.table_named.items():
+            if link >= 1.0 and table not in used and schema.is_subtype(table, subject):
+                conditions.append(Condition("related", None, table=table))
     conditions = _anti_joins(schema, conditions, subject)
     conditions = _dedupe_absent(schema, conditions, answers, cands, excluded)
     conditions = _drop_redundant_absent(schema, conditions, subject)
@@ -1615,11 +1625,11 @@ def _prefer_named_tables(g: Grounding, outputs: list[OutputItem]) -> list[Output
     chosen_tables = {t for o in outputs for t in o.tables}
     result = []
     for item in outputs:
-        if item.column and not g.table_link.get(item.column.split(".")[0], 0):
+        if item.column and not g.table_named.get(item.column.split(".")[0], 0):
             label = schema.column(item.column).label
-            named = [c.key for t, tl in g.table_link.items() if tl > 0 and t not in chosen_tables
+            named = [c.key for t, tl in g.table_named.items() if tl > 0 and t not in chosen_tables
                      for c in schema.table(t).columns if c.label == label]
-            if len(named) == 1 and not any(t in chosen_tables and g.table_link.get(t, 0) > 0
+            if len(named) == 1 and not any(t in chosen_tables and g.table_named.get(t, 0) > 0
                                            for t in chosen_tables):
                 item = replace(item, column=named[0])
         result.append(item)
