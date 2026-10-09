@@ -211,6 +211,19 @@ def _classes(g: Grounding, tables: list[str]) -> list[str]:
     return reps
 
 
+def _table_relevance(g: Grounding, table: str) -> float:
+    columns = g.schema.tables[table].columns
+    return (2 * g.table_link.get(table, 0)
+            + max((g.column_link.get(c.key, 0) for c in columns), default=0))
+
+
+def _by_relevance(g: Grounding, tables: list[str]) -> list[str]:
+    """Tables the request mentions first.  Jev leans toward the first options of a
+    Choice; ordering by relevance makes that lean harmless instead of misleading."""
+    order = {t: i for i, t in enumerate(tables)}
+    return sorted(tables, key=lambda t: (-_table_relevance(g, t), order[t]))
+
+
 def _describe_column(schema: Schema, key: str, examples: int) -> str:
     column = schema.column(key)
     phrase = column_phrase(schema, key)
@@ -231,7 +244,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     columns = [schema.column(k) for k in classes]
 
     # Counts: one exclusive choice.
-    for table in tables:
+    for table in _by_relevance(g, tables):
         if not schema.is_bridge(table):
             cands.counts.append(Option(f"t{len(cands.counts)}",
                                        f"how many {entity(schema, table)} records there are",
@@ -366,7 +379,8 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                       func="DESC" if desc else "ASC")))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
-    for column in columns:
+    for column in sorted(columns, key=lambda c: -(g.column_link.get(c.key, 0)
+                                                  + _table_relevance(g, c.table) / 4)):
         if column.kind in (TEXT, BOOLEAN, DATE) or column.is_identifier or (
                 column.distinct_count is not None and column.distinct_count <= 30):
             cands.groups.append(Option(f"g{len(cands.groups)}",
@@ -417,7 +431,7 @@ def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) ->
     def add(text: str, payload: Ordering) -> None:
         orders.append(Option(f"s{len(orders)}", text, payload))
 
-    for table in cands.tables:
+    for table in _by_relevance(g, cands.tables):
         if not schema.is_bridge(table):
             label = entity(schema, table)
             add(f"by how many {label} records each result has, most first",
@@ -439,14 +453,14 @@ def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) ->
         elif column.kind == TEXT:
             add(f"by {phrase} alphabetically (A to Z)", Ordering(None, column.key, None, False))
             add(f"by {phrase} in reverse alphabetical order (Z to A)", Ordering(None, column.key, None, True))
-    if len(orders) > 250:
-        def relevance(option: Option) -> float:
-            o = option.payload
-            key = o.column or ""
-            return g.column_link.get(key, 0) + g.table_link.get(o.table or key.split(".")[0], 0)
-        keep = {id(o) for o in sorted(orders, key=lambda o: -relevance(o))[:250]}
-        orders = [o for o in orders if id(o) in keep]
-    cands.orders = orders
+    def relevance(option: Option) -> float:
+        o = option.payload
+        key = o.column or ""
+        return g.column_link.get(key, 0) + g.table_link.get(o.table or key.split(".")[0], 0)
+
+    position = {id(o): i for i, o in enumerate(orders)}
+    orders = sorted(orders, key=lambda o: (-relevance(o), position[id(o)]))[:250]
+    cands.orders = [Option(f"s{i}", o.text, o.payload) for i, o in enumerate(orders)]
 
 
 def _related_targets(schema: Schema, subject: str) -> list[str]:
@@ -487,8 +501,9 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
             wanted = (DATE, TEXT) if lit.kind == "date" else (TEXT, DATE)
             keys = [k for k in classes if schema.column(k).kind in wanted
                     and not schema.column(k).is_identifier]
-            if lit.kind == "date":
-                keys.sort(key=lambda k: schema.column(k).kind != DATE)
+            keys.sort(key=lambda k: (lit.kind == "date" and schema.column(k).kind != DATE,
+                                     -g.column_link.get(k, 0),
+                                     -_table_relevance(g, k.split(".")[0])))
         for key in keys[:200]:
             value = stored.get(key, lit.value)
             columns.append(Option(f"c{len(columns)}",
@@ -522,7 +537,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
                                  "or a column name such as '200 meters')", None)]
         ops = NUMERIC_OPS
     count_tables = [Option(f"k{i}", f"how many {entity(schema, t)} records", t)
-                    for i, t in enumerate(t for t in tables if not schema.is_bridge(t))]
+                    for i, t in enumerate(t for t in _by_relevance(g, tables) if not schema.is_bridge(t))]
     group_funcs = [Option(f, w, f) for f, w in AGG_FUNCS]
     return LiteralSlots(lit, roles, columns, dict(ops), count_tables, group_funcs,
                         literal_context(g.question, lit))
@@ -995,8 +1010,8 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
     conditions = [c for c in conditions if not (c.kind == "having_vs" and (c.column, c.func) in explicit)]
     conditions, connector, both = _normalize_conditions(g, conditions, connector, subject, outputs)
     group_keys = group_by or [o.column for o in outputs if o.column and not o.is_aggregate]
-    order, conditions = _retarget_self_counts(g, cands, answers, subject, order, conditions,
-                                              group_keys)
+    order, conditions, outputs = _retarget_self_counts(g, cands, answers, subject, order,
+                                                       conditions, group_keys, outputs)
     referenced = {t for o in outputs for t in o.tables} | {t for c in conditions for t in c.tables}
     referenced |= {o.table for o in order if o.table} | {o.column.split(".")[0] for o in order if o.column}
     reachable = set(referenced)
@@ -1117,12 +1132,13 @@ def _groups_are_singletons(schema: Schema, table: str, keys: list[str]) -> bool:
 
 def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                           subject: str | None, order: tuple[Ordering, ...],
-                          conditions: list[Condition], group_keys: list[str]
-                          ) -> tuple[tuple[Ordering, ...], list[Condition]]:
+                          conditions: list[Condition], group_keys: list[str],
+                          outputs: list[OutputItem] | None = None
+                          ) -> tuple[tuple[Ordering, ...], list[Condition], list[OutputItem]]:
     """Counting a result's own records per result is always 1 ('the order with the most
     items' counts items, not orders): count the most plausible related table instead."""
     if subject is None:
-        return order, conditions
+        return order, conditions, list(outputs or [])
     schema = g.schema
 
     def related_choice() -> str | None:
@@ -1138,18 +1154,22 @@ def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, An
     target = None
     counts_subject = any(o.table == subject and o.func == "COUNT" and o.column is None
                          for o in order) or any(c.kind == "having" and c.table == subject
-                                                and not c.column for c in conditions)
+                                                and not c.column for c in conditions) or any(
+        o.table == subject and o.func == "COUNT" and o.column is None for o in outputs)
     if counts_subject and _groups_are_singletons(schema, subject, group_keys):
         target = related_choice()
+    outputs = list(outputs or [])
     if target is None:
-        return order, conditions
+        return order, conditions, outputs
+    outputs = [OutputItem("COUNT", None, target) if o.table == subject and o.func == "COUNT"
+               and o.column is None else o for o in outputs]
     order = tuple(Ordering(o.func, o.column, target, o.desc)
                   if o.table == subject and o.func == "COUNT" and o.column is None else o
                   for o in order)
     conditions = [Condition(c.kind, c.column, c.op, c.values, c.negated, c.func, target, c.inner)
                   if c.kind == "having" and c.table == subject and not c.column else c
                   for c in conditions]
-    return order, conditions
+    return order, conditions, outputs
 
 
 def _resolve_count_sum(schema: Schema, outputs: list[OutputItem], group_by: list[str],

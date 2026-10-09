@@ -168,14 +168,19 @@ class Schema:
         return sorted({fk.other(table) for fk in self.edges(table)})
 
     def is_bridge(self, table: str) -> bool:
-        """An association table: two or more outgoing FKs and few own attributes."""
+        """An association table (singer_in_concert, has_amenity): two or more outgoing
+        FKs and no identity of its own -- its key is absent or made of its foreign keys,
+        or it is a bare surrogate id with nothing else to describe.  Tables such as
+        orders(id, customer_id, store_id, date, status) are entities, not bridges."""
         outgoing = [fk for fk in self.foreign_keys if fk.table == table and fk.ref_table != table]
         if len(outgoing) < 2:
             return False
+        t = self.tables[table]
         fk_columns = {c for fk in outgoing for c in fk.columns}
-        own = [c for c in self.tables[table].columns if c.name not in fk_columns
-               and not c.primary_key]
-        return len(own) <= 2
+        own = [c for c in t.columns if c.name not in fk_columns and not c.primary_key]
+        if not t.primary_key or set(t.primary_key) <= fk_columns:
+            return len(own) <= 2
+        return not own
 
     # ---- join paths ---------------------------------------------------------
     def shortest_paths(self, start: str, goal: str, limit: int = 4) -> list[list[JoinStep]]:
