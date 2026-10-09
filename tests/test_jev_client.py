@@ -82,6 +82,18 @@ class JevClientTest(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
         self.assertIn("API key", str(ctx.exception))
 
+    def test_exhausted_credits_are_explained_not_retried(self):
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            return httpx.Response(402, json={"detail": {"error_type": "billing_error"}})
+
+        with self.assertRaises(JevError) as ctx:
+            client_with(handler).ask({}, {"a": noul("q?")}, usage=Usage())
+        self.assertEqual(calls["n"], 1)
+        self.assertIn("no API credits", str(ctx.exception))
+
     def test_large_fan_out_is_chunked_and_merged(self):
         questions = {f"q{i}": noul(f"question {i}?") for i in range(MAX_QUESTIONS_PER_REQUEST + 5)}
         self.assertEqual(len(_chunk(questions)), 2)

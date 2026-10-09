@@ -233,6 +233,8 @@ class JevClient:
                 time.sleep(delay)
                 continue
             message = {401: "Jev rejected the API key. Check the connection settings.",
+                       402: "The Jev account has no API credits left. Add credits in the TypeSafe "
+                            "console (Settings > Billing), then try again.",
                        403: "Jev denied access for this key or model.",
                        429: "Jev rate limit reached; try again shortly."}.get(
                 response.status_code, f"Jev returned HTTP {response.status_code}.")

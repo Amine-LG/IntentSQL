@@ -115,6 +115,13 @@ class AdvancedTest(unittest.TestCase):
             ("^lop_", "", "exactly this value")])
         self.assertEqual(rows(result), [(37.5,)])
 
+    def test_more_records_than_the_average_parent(self):
+        # Orders per customer: 2, 1, 1, 0, 1 (average 1): only Ann has more.
+        result = self.ask("Which customers placed more orders than the average customer?", [
+            ("^out_", "show the customer name in", "itself"),
+            ("^vsagg$", "", "each customer has more order records than the average customer")])
+        self.assertEqual(rows(result), [("Ann",)])
+
     def test_period_parsing(self):
         today = date(2026, 10, 9)
         found = {text: value[:2] for _, _, text, value in periods(

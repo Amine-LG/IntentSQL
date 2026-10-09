@@ -307,7 +307,7 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
                         order_by=(ir.OrderItem(ir.Agg("COUNT", ir.Star()), cond.func != "ASC"),),
                         limit=1)
         return ir.Compare(scope.col(cond.col), cond.op, ir.ScalarQuery(sub))
-    if cond.kind == "having_vs" and cond.col is None:
+    if cond.kind == "having_vs" and cond.column is None:
         # 'customers with more orders than the average customer': per-group count against
         # the overall number of counted records per subject record.
         counter[0] += 1
