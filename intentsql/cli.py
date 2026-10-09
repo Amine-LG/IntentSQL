@@ -65,6 +65,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     from intentsql.benchmark.systems import intentsql_system
     from intentsql.interpret import Strategy
 
+    if args.suite:
+        return _run_suite(args)
     if args.split == "test" and not args.allow_test:
         print("The test split is held out. Pass --allow-test for a milestone evaluation; "
               "per-case details are redacted.", file=sys.stderr)
@@ -119,6 +121,31 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_suite(args: argparse.Namespace) -> int:
+    from intentsql.benchmark.suites import load_suite, run_suite, summarize_suite
+    from intentsql.benchmark.systems import intentsql_system
+    from intentsql.interpret import Strategy
+
+    strategy = Strategy(**json.loads(args.strategy)) if args.strategy else None
+    cases = load_suite(args.suite)
+    results = run_suite(intentsql_system(strategy), cases, workers=args.workers)
+    summary = summarize_suite(results)
+    print(json.dumps(summary, indent=1))
+    if args.show_failures:
+        for r in results:
+            if not r.correct:
+                print(f"✗ {r.case.id} [{r.case.category}] {r.case.question}\n   {r.status}: "
+                      f"{r.sql or r.message}")
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(json.dumps({
+            "suite": args.suite, "summary": summary,
+            "results": [{"id": r.case.id, "category": r.case.category, "question": r.case.question,
+                         "status": r.status, "correct": r.correct, "sql": r.sql, "message": r.message,
+                         "confidence": r.confidence} for r in results]}, indent=1))
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
     uvicorn.run("intentsql.web:app", host=args.host, port=args.port, workers=1)
@@ -153,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--out")
     bench.add_argument("--quiet", action="store_true")
     bench.add_argument("--allow-test", action="store_true")
+    bench.add_argument("--suite", help="run a hand-written suite (benchmarks/suites/*.json) instead of Spider")
+    bench.add_argument("--show-failures", action="store_true")
     bench.set_defaults(func=cmd_benchmark)
 
     serve = sub.add_parser("serve", help="start the web app")

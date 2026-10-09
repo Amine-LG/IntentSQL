@@ -276,6 +276,10 @@ def extract_literals(question: str, schema: Schema) -> list[Literal]:
         matches = _fuzzy(index, surface) or _probe_large_columns(schema, surface)
         if matches:
             add(surface, matches[0][1], "text", start, end, matches)
+        elif not _names_schema(surface, schema_words):
+            # A proper noun the database does not contain ('from Brazil') is still a
+            # condition: dropping it would silently widen the answer.
+            add(surface, surface, "text", start, end)
 
     found.sort(key=lambda lit: lit.start)
     return [Literal(f"L{i + 1}", *(_fields(lit)[1:])) for i, lit in enumerate(found)]
@@ -309,6 +313,11 @@ def _capitalized_spans(question: str, tokens: list[Token]) -> list[tuple[int, in
         else:
             i += 1
     return spans
+
+
+def _names_schema(surface: str, schema_words: set[str]) -> bool:
+    words = [lemma(w) for w in surface.lower().split()]
+    return all(w in schema_words or w in STOPWORDS for w in words)
 
 
 def _fuzzy(index: ValueIndex, surface: str) -> list[tuple[str, str]]:

@@ -56,6 +56,9 @@ AGG_WORDS = {
     "MAX": re.compile(r"\b(max|maximum|highest|largest|biggest|greatest)\b", re.I),
     "MIN": re.compile(r"\b(min|minimum|lowest|smallest|least)\b", re.I),
 }
+COUNT_KINDS_CUE = re.compile(r"\bhow many (kinds|types|sorts|varieties)\b|\bnumber of (kinds|types)\b", re.I)
+CONTAINS_CUE = re.compile(r"\b(contain\w*|includ\w*|with the (word|letter|text|string)|start\w* with|"
+                          r"begin\w* with|end\w* with|in (its|their) (name|title))\b", re.I)
 DISTINCT_CUE = re.compile(r"\b(distinct|different|unique|differ\w*|various)\b", re.I)
 NEGATION_CUE = re.compile(r"\b(not|no|never|without|none|except|excluding|neither|nor|other than|"
                           r"lacks?|apart from|besides)\b|n't\b", re.I)
@@ -66,8 +69,11 @@ TOP_GROUP_CUE = re.compile(r"\b(most|least)\s+(common|popular|frequent|usual)\b"
 NULL_CUE = re.compile(r"\b(without|missing|unknown|empty|null|blank|lacks?|lacking|not (?:set|given|"
                       r"recorded|specified|available|assigned|provided|known|listed)|(?:do|does|did)(?: not|n't) "
                       r"have|has no|have no|with no|no \w+ (?:assigned|recorded|given|set|provided|listed)|"
-                      r"(?:has|have|with) (?:a|an|any) \w+ (?:recorded|listed|set|given))\b", re.I)
+                      r"(?:has|have|with) (?:a|an|any) \w+ (?:recorded|listed|set|given|on file))\b", re.I)
 OWN_GROUP_CUE = re.compile(r"\b(their|its|his|her|own|same|respective|within|that of)\b", re.I)
+PER_GROUP_SUPERLATIVE = re.compile(r"\b(\w+est|most \w+|least \w+|highest|lowest|top)\b.*\b(in|of|for|within) "
+                                   r"(each|every|its|their)\b|\b(each|every|per)\b.*\b(\w+est|highest|lowest)\b",
+                                   re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
 MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
@@ -230,11 +236,14 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
             cands.counts.append(Option(f"t{len(cands.counts)}",
                                        f"how many {entity(schema, table)} records there are",
                                        OutputItem("COUNT", None, table)))
-    for column in columns:
-        if column.kind in (TEXT, DATE, BOOLEAN) or (column.is_identifier and not column.primary_key):
-            cands.counts.append(Option(f"t{len(cands.counts)}",
-                                       f"how many different {column_phrase(schema, column.key)} values there are",
-                                       OutputItem("COUNT", column.key, distinct=True)))
+    if DISTINCT_CUE.search(g.question) or COUNT_KINDS_CUE.search(g.question):
+        # Counting distinct values only when the request says so ('how many different
+        # cities'); otherwise these options pull counts toward the filtered column.
+        for column in columns:
+            if column.kind in (TEXT, DATE, BOOLEAN) or (column.is_identifier and not column.primary_key):
+                cands.counts.append(Option(f"t{len(cands.counts)}",
+                                           f"how many different {column_phrase(schema, column.key)} values there are",
+                                           OutputItem("COUNT", column.key, distinct=True)))
 
     if STAR_CUE.search(g.question):
         cands.stars = [Option(f"w{i}", f"every attribute of the {entity(schema, t)} records",
@@ -276,8 +285,16 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
         values = schema.values.get(column.key, ())
         if (column.kind in (TEXT, BOOLEAN) or column.kind == NUMBER) and 2 <= len(values) <= CATEGORICAL_MAX:
             phrase = column_phrase(schema, column.key)
-            cands.categorical[column.key] = [Option(f"v{i}", f"only results whose {phrase} is '{v}'", v)
-                                             for i, v in enumerate(values)]
+            flag = _flag_values(values)
+            if flag:
+                yes, no = flag
+                plural_entity = entity(schema, column.table) + "s"
+                cands.categorical[column.key] = [
+                    Option("v0", f"only {plural_entity} that are {column.label} ({column.label} = {yes})", yes),
+                    Option("v1", f"only {plural_entity} that are not {column.label} ({column.label} = {no})", no)]
+            else:
+                cands.categorical[column.key] = [Option(f"v{i}", f"only results whose {phrase} is '{v}'", v)
+                                                 for i, v in enumerate(values)]
 
     for subject in tables:
         if schema.is_bridge(subject):
@@ -313,7 +330,7 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                           Condition("null", column.key, negated=True)))
         cands.nulls = cands.nulls[:250]
 
-    if AGG_COMPARE_CUE.search(g.question) and OWN_GROUP_CUE.search(g.question):
+    if (AGG_COMPARE_CUE.search(g.question) and OWN_GROUP_CUE.search(g.question)) or PER_GROUP_SUPERLATIVE.search(g.question):
         for column in columns:
             if not column.is_numeric or schema.is_key(column.key):
                 continue
@@ -329,6 +346,11 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                         f"a{len(cands.vs_aggregate)}",
                         f"each result's {phrase} is {word} the average {phrase} of records with the same {group_phrase}",
                         Condition("vs_group", column.key, op, func="AVG", table=other.key)))
+                for func, word in (("MAX", "highest"), ("MIN", "lowest")):
+                    cands.vs_aggregate.append(Option(
+                        f"a{len(cands.vs_aggregate)}",
+                        f"each result has the {word} {phrase} among records with the same {group_phrase}",
+                        Condition("vs_group", column.key, "=", func=func, table=other.key)))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
     if TOP_GROUP_CUE.search(g.question):
@@ -375,6 +397,17 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                                        fk.key))
                 cands.joins["|".join(sorted((a, b)))] = opts
     return cands
+
+
+def _flag_values(values: tuple[str, ...]) -> tuple[str, str] | None:
+    """(true value, false value) when a column stores a two-valued flag."""
+    pairs = (("1", "0"), ("T", "F"), ("Y", "N"), ("yes", "no"), ("true", "false"), ("Yes", "No"),
+             ("TRUE", "FALSE"), ("y", "n"), ("t", "f"))
+    present = set(values)
+    for yes, no in pairs:
+        if present == {yes, no}:
+            return yes, no
+    return None
 
 
 def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) -> None:
@@ -446,6 +479,10 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
             if key.split(".")[0] in tables:
                 stored.setdefault(scoped(key), value)
         keys = list(stored)
+        partial = lit.kind == "text" and bool(CONTAINS_CUE.search(g.question))
+        if partial:
+            keys += [k for k in classes if schema.column(k).kind == TEXT and not schema.is_key(k)
+                     and k not in keys]
         if not keys:
             wanted = (DATE, TEXT) if lit.kind == "date" else (TEXT, DATE)
             keys = [k for k in classes if schema.column(k).kind in wanted
@@ -466,7 +503,7 @@ def _literal_slots(g: Grounding, lit: Literal, tables: list[str], classes: list[
         if lit.kind == "date":
             ops = DATE_OPS
         else:
-            ops = EXACT_TEXT_OPS if stored else PARTIAL_TEXT_OPS
+            ops = EXACT_TEXT_OPS if stored and not partial else PARTIAL_TEXT_OPS
     else:
         matched = {scoped(c) for c in lit.columns}
         numeric = [k for k in classes if schema.column(k).kind in (NUMBER, DATE) or k in matched]
@@ -953,11 +990,21 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             subject = rel_subject
 
     conditions = _anti_joins(schema, conditions, subject)
-    conditions = _dedupe_absent(schema, conditions, answers, cands)
+    conditions = _dedupe_absent(schema, conditions, answers, cands, excluded)
+    explicit = {(c.column, c.func) for c in conditions if c.kind == "having" and c.column}
+    conditions = [c for c in conditions if not (c.kind == "having_vs" and (c.column, c.func) in explicit)]
     conditions, connector, both = _normalize_conditions(g, conditions, connector, subject, outputs)
     group_keys = group_by or [o.column for o in outputs if o.column and not o.is_aggregate]
     order, conditions = _retarget_self_counts(g, cands, answers, subject, order, conditions,
                                               group_keys)
+    referenced = {t for o in outputs for t in o.tables} | {t for c in conditions for t in c.tables}
+    referenced |= {o.table for o in order if o.table} | {o.column.split(".")[0] for o in order if o.column}
+    reachable = set(referenced)
+    if subject:
+        for table in list(referenced):
+            for path in schema.shortest_paths(subject, table, limit=1):
+                reachable.update(step.table for step in path)
+    conditions = [c for c in conditions if not (c.kind == "related" and c.table in reachable)]
     aggregated = (any(o.is_aggregate for o in outputs) or any(o.is_aggregate for o in order)
                   or any(c.kind in ("having", "having_vs") for c in conditions))
     if not aggregated:
@@ -983,7 +1030,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
                    if o.func == "COUNT" and o.distinct and o.column in group_classes else o
                    for o in outputs]
         if not any(o.column in group_classes for o in outputs if o.column and not o.is_aggregate):
-            label = _group_label(schema, group_by[0], outputs)
+            label = _group_label(schema, group_by[0], outputs, {t for c in conditions for t in c.tables})
             if label:
                 outputs.insert(0, OutputItem(None, label))
         outputs = [o for i, o in enumerate(outputs) if o not in outputs[:i]]
@@ -1037,9 +1084,14 @@ def _positive(cond: Condition) -> Condition:
 
 
 def _dedupe_absent(schema: Schema, conditions: list[Condition], answers: dict[str, Answer],
-                   cands: Candidates) -> list[Condition]:
-    """'schools without any goalies': one negated relationship, not one per hop."""
+                   cands: Candidates, excluded: list[Condition] | None = None) -> list[Condition]:
+    """'schools without any goalies': one negated relationship, not one per hop; and no
+    bare 'has no orders' next to 'never ordered Espresso Beans' (a narrower exclusion)."""
     absent = [c for c in conditions if c.kind == "absent"]
+    specific = [c for c in absent if c.inner]
+    if (specific or excluded) and len(absent) > len(specific):
+        conditions = [c for c in conditions if not (c.kind == "absent" and not c.inner)]
+        absent = specific
     if len(absent) < 2:
         return conditions
     keep = max(absent, key=lambda c: (bool(c.inner), -len(_far_side(schema, next(
@@ -1169,7 +1221,8 @@ def _choose_routes(g: Grounding, intent: Intent, answers: dict[str, Answer],
     return intent.with_(via=tuple(dict.fromkeys(via)))
 
 
-def _group_label(schema: Schema, key: str, outputs: list[OutputItem]) -> str | None:
+def _group_label(schema: Schema, key: str, outputs: list[OutputItem],
+                 condition_tables: set[str] | None = None) -> str | None:
     """How to show a group: its key, or the entity's name when grouping by an id of a
     table that has a name column (without adding a join just to show a label)."""
     column = schema.column(key)
@@ -1178,7 +1231,7 @@ def _group_label(schema: Schema, key: str, outputs: list[OutputItem]) -> str | N
     entity = schema.table(column.table)
     if any(o.column and o.column.split(".")[0] == entity.name and not o.is_aggregate for o in outputs):
         return None   # the entity is already shown through one of its attributes
-    needed = {t for o in outputs for t in o.tables}
+    needed = {t for o in outputs for t in o.tables} | (condition_tables or set())
     for member in schema.equivalents(key):
         table = schema.table(member.split(".")[0])
         if table.name != entity.name and table.name not in needed:

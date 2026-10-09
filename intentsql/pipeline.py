@@ -18,9 +18,10 @@ from typing import Any
 from intentsql import ir
 from intentsql.compiler import CompileError, compile_query
 from intentsql.grounding import ground
-from intentsql.intent import Intent, PlanError, build_query, describe
+from intentsql.intent import Intent, PlanError, build_query
 from intentsql.interpret import Decision, Strategy, alternatives, interpret
 from intentsql.jev import Exchange, JevClient, JevError, Usage, choice, noul, shared_client
+from intentsql.render import describe
 from intentsql.schema import load_schema
 
 ANSWERED, AMBIGUOUS, REFUSED, ERROR = "answered", "ambiguous", "refused", "error"
