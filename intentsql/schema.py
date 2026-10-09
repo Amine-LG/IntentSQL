@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
-from intentsql.text import humanize
+from intentsql.text import humanize, lemma
 
 NUMBER, TEXT, DATE, BOOLEAN, OTHER = "number", "text", "date", "boolean", "other"
 
@@ -411,11 +411,26 @@ def _infer_foreign_keys(tables: dict[str, Table], declared: list[ForeignKey]) ->
             if (table.name, (column.name,)) in known or column.primary_key and len(table.primary_key) == 1:
                 continue
             targets = [t for t in pk_index.get(column.name.lower(), []) if t != table.name]
-            if len(targets) == 1 and column.name.lower().endswith("id"):
+            name = column.name.lower()
+            if not targets and name.endswith("id") and not column.primary_key:
+                # Role-named references: end_station_id -> station(id), manager_id -> manager.
+                words = set(humanize(column.name).split()) - {"id"}
+                targets = [t.name for t in tables.values()
+                           if t.name != table.name and len(t.primary_key) == 1
+                           and t.primary_key[0].lower() in ("id", f"{t.name.lower()}_id")
+                           and lemma_words(t.label) <= {lemma(w) for w in words}]
+            if len(targets) == 1 and name.endswith("id"):
                 target = tables[targets[0]]
-                inferred.append(ForeignKey(table.name, (column.name,), target.name,
-                                           (target.primary_key[0],), declared=False))
+                pk = target.column(target.primary_key[0])
+                if (pk.kind == column.kind or {pk.kind, column.kind} <= {NUMBER, TEXT}) and (
+                        table.name, (column.name,)) not in known:
+                    inferred.append(ForeignKey(table.name, (column.name,), target.name,
+                                               (target.primary_key[0],), declared=False))
     return inferred
+
+
+def lemma_words(label: str) -> set[str]:
+    return {lemma(w) for w in label.split()}
 
 
 def introspect(conn: sqlite3.Connection, path: str = "") -> Schema:

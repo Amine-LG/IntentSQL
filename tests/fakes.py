@@ -80,6 +80,8 @@ class ScriptedJev:
         options = question.options or {}
         if key == "pick":
             return self._choice(options, "A")
+        if key == "scope":
+            return self._choice(options, "read")
         for default in ("none", "no", "unordered", "all", "other"):
             if default in options:
                 return self._choice(options, default)

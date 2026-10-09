@@ -6,6 +6,7 @@ generation, assembly, join planning, subquery shapes, compilation) are tested
 offline exactly as they run in production.
 """
 
+import sqlite3
 import tempfile
 import unittest
 
@@ -156,6 +157,38 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(len(jev.asked), 3)           # round one, a targeted follow-up, verification
         self.assertEqual(len(result.rows), 5)
 
+
+    def test_writes_and_out_of_scope_requests_are_refused(self):
+        jev = ScriptedJev([("^scope$", "", "=modify")])
+        result = answer(self.db, "Delete all cancelled orders.", client=jev)
+        self.assertEqual(result.status, REFUSED)
+        self.assertIn("only reads", result.message)
+        jev = ScriptedJev([("^scope$", "", "=other")])
+        result = answer(self.db, "What will sales be next year?", client=jev)
+        self.assertEqual(result.status, REFUSED)
+
+    def test_missing_values(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO customers VALUES (6, 'Fay', NULL, 'N')")
+        try:
+            from intentsql.schema import _CACHE
+            _CACHE.clear()
+            result = self.ask("Which customers have no city recorded?", [
+                ("^out_", "customer name in", SHOW),
+                ("^nulls$", "", "customer city is missing")])
+            self.assertEqual(rows(result), [("Fay",)])
+            self.assertIn("IS NULL", result.sql)
+        finally:
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("DELETE FROM customers WHERE id = 6")
+            _CACHE.clear()
+
+    def test_above_own_group_average_is_correlated(self):
+        result = self.ask("Which employees earn more than the average salary of their department?", [
+            ("^out_", "employee name in", SHOW),
+            ("^vsagg$", "", "average employee salary of records with the same employee dept")])
+        # sales avg 4500 -> Zoe; tech avg 5500 -> Xia, Wim
+        self.assertEqual(rows(result), [("Wim",), ("Xia",), ("Zoe",)])
 
     def test_low_verification_is_reported_as_uncertain(self):
         jev = ScriptedJev([("^out_", "customer name in", SHOW), ("^verify", "", 0.05)])

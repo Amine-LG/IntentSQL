@@ -63,6 +63,11 @@ AGG_COMPARE_CUE = re.compile(r"\b(average|mean|than (any|all|every|each|the (max
                              r"smallest|highest|lowest|max|min))|than (that|those) of)\b", re.I)
 THEN_CUE = re.compile(r"\bthen\b|\bfollowed by\b|\bsecondarily\b|\band (then )?by\b", re.I)
 TOP_GROUP_CUE = re.compile(r"\b(most|least)\s+(common|popular|frequent|usual)\b", re.I)
+NULL_CUE = re.compile(r"\b(without|missing|unknown|empty|null|blank|lacks?|lacking|not (?:set|given|"
+                      r"recorded|specified|available|assigned|provided|known|listed)|(?:do|does|did)(?: not|n't) "
+                      r"have|has no|have no|with no|no \w+ (?:assigned|recorded|given|set|provided|listed)|"
+                      r"(?:has|have|with) (?:a|an|any) \w+ (?:recorded|listed|set|given))\b", re.I)
+OWN_GROUP_CUE = re.compile(r"\b(their|its|his|her|own|same|respective|within|that of)\b", re.I)
 RANGE_CUE = re.compile(r"\bbetween\b|\bfrom\s+\S+\s+(to|through|until|till)\b", re.I)
 CATEGORICAL_MAX = 12
 MAX_ROUNDS = 2          # follow-up rounds after the main fan-out
@@ -111,6 +116,7 @@ class Candidates:
     limits: list[Option] = field(default_factory=list)
     shares: list[Option] = field(default_factory=list)
     joins: dict[str, list[Option]] = field(default_factory=dict)   # table pair -> FK choices
+    nulls: list[Option] = field(default_factory=list)              # missing / present values
     stars: list[Option] = field(default_factory=list)              # "all information about X"
     multi_count: list[Option] = field(default_factory=list)        # several counts requested
 
@@ -295,6 +301,34 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
                         f"a{len(cands.vs_aggregate)}",
                         f"each group's average {phrase} is {word} the average {phrase} of all {label} records",
                         Condition("having_vs", column.key, op, func="AVG")))
+        cands.vs_aggregate = cands.vs_aggregate[:250]
+
+    if NULL_CUE.search(g.question):
+        for column in columns:
+            if column.null_count and not column.primary_key:
+                phrase = column_phrase(schema, column.key)
+                cands.nulls.append(Option(f"n{len(cands.nulls)}", f"only results whose {phrase} is missing (empty, unknown)",
+                                          Condition("null", column.key)))
+                cands.nulls.append(Option(f"n{len(cands.nulls)}", f"only results whose {phrase} is present (recorded)",
+                                          Condition("null", column.key, negated=True)))
+        cands.nulls = cands.nulls[:250]
+
+    if AGG_COMPARE_CUE.search(g.question) and OWN_GROUP_CUE.search(g.question):
+        for column in columns:
+            if not column.is_numeric or schema.is_key(column.key):
+                continue
+            phrase = column_phrase(schema, column.key)
+            for other in schema.tables[column.table].columns:
+                if other.primary_key or other.key == column.key or other.is_numeric and not schema.is_key(other.key):
+                    continue
+                if not (schema.is_key(other.key) or (other.distinct_count or 0) <= 50):
+                    continue
+                group_phrase = column_phrase(schema, other.key)
+                for op, word in ((">", "greater than"), ("<", "less than")):
+                    cands.vs_aggregate.append(Option(
+                        f"a{len(cands.vs_aggregate)}",
+                        f"each result's {phrase} is {word} the average {phrase} of records with the same {group_phrase}",
+                        Condition("vs_group", column.key, op, func="AVG", table=other.key)))
         cands.vs_aggregate = cands.vs_aggregate[:250]
 
     if TOP_GROUP_CUE.search(g.question):
@@ -618,6 +652,18 @@ def round_one(g: Grounding, cands: Candidates, strategy: Strategy) -> dict[str, 
     q["limit"] = choice(
         "Does `request` ask for only the top or first item(s) of a ranked list? If so, how many?",
         {o.key: o.text for o in cands.limits})
+    q["scope"] = choice(
+        "What kind of request is `request`?",
+        {"read": "a question answered by looking up, listing, counting, summarizing or comparing data "
+                 "stored in `database`",
+         "modify": "a request to add, change, update or delete data",
+         "other": "something else: a prediction, an opinion, general knowledge, or information that "
+                  "`database` does not store"})
+    if cands.nulls:
+        q["nulls"] = choice(
+            "Does `request` restrict results to records where some attribute is missing (empty, "
+            "unknown, not recorded) or present? If so, which?",
+            {**{o.key: o.text for o in cands.nulls}, "none": "no such restriction"})
     q["connector"] = choice(
         "If `request` states several conditions, must every result satisfy all of them, or "
         "is satisfying any one of them enough?",
@@ -683,6 +729,16 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
              strategy: Strategy) -> Interpretation:
     schema = g.schema
     record = _Recorder()
+
+    scope = answers.get("scope")
+    if scope is not None:
+        record("scope", "request scope", "kind of request", scope, scope.choice)
+        if scope.choice == "modify" and scope.top_probability >= 0.6:
+            return Interpretation(None, record.decisions, record.uncertain,
+                                  "IntentSQL only reads data; it does not add, change or delete records.")
+        if scope.choice == "other" and scope.top_probability >= 0.85:
+            return Interpretation(None, record.decisions, record.uncertain,
+                                  "This request does not look answerable from the data in this database.")
 
     # -- outputs
     outputs: list[OutputItem] = []
@@ -806,6 +862,12 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         option = _pick(options, answer)
         record(f"cat_{key}", "implicit value", option.text, answer, option.payload)
         conditions.append(Condition("compare", key, "=", (option.payload,)))
+
+    # -- missing / present values
+    if "nulls" in answers and answers["nulls"].choice != "none":
+        option = _pick(cands.nulls, answers["nulls"])
+        record("nulls", "missing values", option.text, answers["nulls"], option.text)
+        conditions.append(option.payload)
 
     # -- comparison with an aggregate
     top_group: Condition | None = None

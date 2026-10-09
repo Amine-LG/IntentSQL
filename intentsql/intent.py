@@ -61,6 +61,8 @@ class Condition:
     same_as      column equals that of the record(s) matching ``inner`` ("same department as Clara")
     having_vs    func(column) per group op the overall func(column) of its table
     top_group    column op the most (func=DESC) / least (ASC) common value of that column
+    vs_group     column op func(column) over the records sharing ``table`` (a column key):
+                 'earning more than the average salary of their department' (correlated)
     vs_aggregate column op func(agg_column) over all rows of its table
     having       func(column or COUNT(*) of table) op values[0], per group
     """
@@ -183,6 +185,9 @@ def describe_condition(schema: Schema, cond: Condition, subject: str | None = No
         return f"{phrase} is {'not ' if cond.negated else ''}one of {values}"
     if cond.kind == "null":
         return f"{phrase} is {'present' if cond.negated else 'missing (null)'}"
+    if cond.kind == "vs_group":
+        return (f"{phrase} {OP_WORDS[cond.op]} the {FUNC_WORDS[cond.func or 'AVG']} {phrase} of "
+                f"records with the same {column_phrase(schema, cond.table)}")
     if cond.kind == "top_group":
         word = "most" if cond.func != "ASC" else "least"
         return f"{phrase} {'is' if cond.op == '=' else 'is not'} the {word} common {phrase}"
@@ -320,6 +325,15 @@ def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int
     if cond.kind == "having":
         expr = _agg_expr(scope, cond.func, cond.column, cond.table)
         return ir.Compare(expr, cond.op, ir.Lit(cond.values[0]))
+    if cond.kind == "vs_group":
+        counter[0] += 1
+        table = cond.column.split(".", 1)[0]
+        inner_from, inner_scope = _from(schema, [table], table, f"q{counter[0]}_", join_choices)
+        group = cond.table or ""
+        sub = ir.Select(items=(ir.SelectItem(ir.Agg(cond.func or "AVG", inner_scope.col(cond.column))),),
+                        from_=inner_from,
+                        where=ir.Compare(inner_scope.col(group), "=", scope.col(group)))
+        return ir.Compare(scope.col(cond.column), cond.op, ir.ScalarQuery(sub))
     if cond.kind == "top_group":
         counter[0] += 1
         table = cond.column.split(".", 1)[0]
@@ -433,7 +447,7 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
     join_choices = dict(intent.join_choices)
     having = [c for c in intent.conditions if c.kind == "having"]
     counted = list(dict.fromkeys(c.table for c in having if c.table and not c.column))
-    if len(counted) >= 2 and not intent.order:
+    if len(counted) >= 2 and not intent.order and (intent.group_by or _effective_groups(intent, schema)):
         # Counts over different related tables cannot share one join (rows would
         # multiply): evaluate each separately and combine the groups.
         rest = [c for c in intent.conditions if c.kind != "having"]
@@ -444,6 +458,20 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
         for i, part in enumerate(parts[1:], start=1):
             query = ir.SetOp(op, query, _select(schema, part, f"p{i}_", join_choices))
         return query
+    having = [c for c in intent.conditions if c.kind in ("having", "having_vs")]
+    if having and not intent.group_by and not _effective_groups(intent, schema) and intent.subject:
+        # 'How many students have at least one B grade': count the students whose key is
+        # among those satisfying the per-student condition.
+        subject = intent.subject
+        pk = schema.table(subject).primary_key
+        if len(pk) == 1:
+            key = f"{schema.table(subject).name}.{pk[0]}"
+            groups = intent.with_(outputs=(OutputItem(None, key),), group_by=(key,), order=(),
+                                  limit=None, offset=None, distinct=False)
+            outer = intent.with_(conditions=tuple(c for c in intent.conditions if c not in having))
+            inner = _select(schema, groups, "h_", join_choices)
+            return _select(schema, outer, "", join_choices,
+                           extra_where=lambda scope: ir.InQuery(scope.col(key), inner))
     keyed = (any(o.is_aggregate for o in intent.outputs) or intent.order or intent.group_by
              or intent.limit is not None)
     if intent.excluded:
@@ -472,6 +500,17 @@ def build_query(schema: Schema, intent: Intent) -> ir.Query:
     return _select(schema, intent, "", join_choices)
 
 
+def _negate(cond: Condition) -> Condition:
+    flip = {"=": "!=", "!=": "=", ">": "<=", "<": ">=", ">=": "<", "<=": ">",
+            "contains": "not_contains", "not_contains": "contains"}
+    if cond.kind in ("compare", "text") and cond.op in flip:
+        kind = "text" if flip[cond.op] in ("contains", "not_contains") else cond.kind
+        return Condition(kind, cond.column, flip[cond.op], cond.values)
+    if cond.kind in ("in_values", "null"):
+        return Condition(cond.kind, cond.column, cond.op, cond.values, not cond.negated)
+    raise PlanError("This exclusion cannot be expressed without a record key")
+
+
 def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]], op: str,
                   join_choices: dict[str, str]) -> ir.Query:
     """``main`` restricted by a set operation over the subject's key:
@@ -481,6 +520,10 @@ def _with_key_set(schema: Schema, main: Intent, parts: list[tuple[Intent, str]],
         raise PlanError("No subject for a set operation")
     pk = schema.table(subject).primary_key
     if len(pk) != 1:
+        if op == "EXCEPT":
+            # No key to remove records by: exclude matching rows directly instead.
+            negated = tuple(_negate(c) for c in parts[0][0].conditions)
+            return _select(schema, main.with_(conditions=main.conditions + negated), "", join_choices)
         raise PlanError(f"{subject} has no single-column key to combine results by")
     key = OutputItem(None, f"{schema.table(subject).name}.{pk[0]}")
 
