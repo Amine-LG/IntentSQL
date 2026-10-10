@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from intentsql import __version__
+
 
 def _print_table(columns: list[str], rows: list[tuple[Any, ...]], limit: int = 30) -> None:
     if not columns:
@@ -42,7 +44,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result.to_dict(debug=args.debug), indent=1, default=str))
         return 0 if result.status == "answered" else 1
-    print(f"[{result.status}] {result.explanation or ''}")
+    demo = result.provider == "demo"
+    print(f"[{result.status}{' · demo' if demo else ''}] {result.explanation or ''}".rstrip())
+    if demo:
+        print("Demo mode: fixed default choices, not a reading of the question.")
     if result.message:
         print(result.message)
     if result.display_sql:
@@ -55,7 +60,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
         for d in result.decisions:
             print(f"  [{d.purpose}] {d.question} -> {d.selected} (p={d.probability:.2f})")
     u = result.usage
-    print(f"\n{u.calls} Jev call(s), {u.input_tokens} input tokens, "
+    source = "demo" if demo else (result.provider or "model")
+    print(f"\n{u.calls} {source} call(s), {u.input_tokens} input tokens, "
           f"{result.timings_ms.get('total', 0)} ms")
     return 0 if result.status == "answered" else 1
 
@@ -189,7 +195,7 @@ def cmd_provider(args: argparse.Namespace) -> int:
         print(cfg.notice)
     print(f"provider: {info['label']} [{info['provider'] or 'none'}]"
           f"{' (set by INTENTSQL_PROVIDER)' if cfg.locked_by_environment else ''}")
-    print(f"model: {info['model'] or '-'}  key: {'set' if info['has_key'] else 'missing'}  "
+    print(f"model: {info['model'] or '-'}  key: {'not needed' if info['provider'] == 'demo' else 'set' if info['has_key'] else 'missing'}  "
           f"keys saved for: {', '.join(k for k in cfg.keys_present if k != 'demo') or 'none'}")
     if args.test:
         usage = Usage()
@@ -202,7 +208,7 @@ def cmd_provider(args: argparse.Namespace) -> int:
         except JevError as exc:
             print(f"test failed: {exc}")
             return 1
-        print(f"test passed: choice={answers['team'].choice} score={answers['urgency'].score} "
+        print(("demo check (no model contacted): " if info["provider"] == "demo" else "test passed: ") + f"choice={answers['team'].choice} score={answers['urgency'].score} "
               f"noul={answers['refund'].p:.2f} model={','.join(usage.models) or info['model']} "
               f"input tokens={usage.input_tokens}")
     return 0
@@ -222,8 +228,10 @@ def cmd_keys(args: argparse.Namespace) -> int:
     except WorkspaceError as exc:
         print(exc)
         return 1
-    print(f"{info.label} {info.model_label} selected" + (" and its key saved (not shown)." if key else "."))
-    print("Run 'intent-sql provider --test' to check the connection.")
+    name = info.label if info.offline else f"{info.label} {info.model_label}"
+    print(f"{name} selected" + (" and its key saved (not shown)." if key else "."))
+    if not info.offline:
+        print("Run 'intent-sql provider --test' to check the connection.")
     return 0
 
 
@@ -248,6 +256,7 @@ def _guarded(run_benchmark):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="intent-sql", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"IntentSQL {__version__} (beta)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ask = sub.add_parser("ask", help="answer one natural-language question")

@@ -16,7 +16,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
 
 COPY LICENSE README.md pyproject.toml ./
 COPY intentsql ./intentsql
-RUN python -m pip install --no-cache-dir --no-deps .
+RUN python -m pip install --no-cache-dir --no-deps . && rm -rf build intentsql.egg-info
 
 USER intentsql
 

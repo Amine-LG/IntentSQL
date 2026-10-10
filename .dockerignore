@@ -22,3 +22,8 @@ tests
 tools
 requirements-dev.txt
 connection.json
+build
+dist
+*.egg-info
+scripts
+experiments

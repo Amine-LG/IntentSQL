@@ -496,8 +496,9 @@ class UnselectedClient:
                 "budget_usd": None, "spent_usd": 0.0, "requests": 0}
 
     def ask(self, *args: Any, **kwargs: Any) -> dict[str, Answer]:
-        raise JevError("No model is selected. Open Settings to choose TypeSafe Jev or Liquid d1, "
-                       "or try the demo mode.", fatal=True, kind="not_configured")
+        raise JevError("No model is selected. Choose TypeSafe Jev or Liquid AI d1 (the model button in the "
+                       "app, or `intent-sql keys typesafe|liquid`), or try demo mode "
+                       "(`intent-sql keys demo`).", fatal=True, kind="not_configured")
 
 
 def shared_client() -> Any:

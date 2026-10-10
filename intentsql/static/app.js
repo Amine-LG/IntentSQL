@@ -858,4 +858,5 @@ $("#console-sql").addEventListener("keydown", (event) => {
 // ---------------------------------------------------------------- start
 autosize();
 refreshConnection();
+api("/api/health").then((h) => { $("#app-version").textContent = String(h.version || "").replace(/b(\d+)$/, "-beta.$1"); }).catch(() => {});
 loadDatabases().catch((err) => $("#schema-list").replaceChildren(el("p", { class: "error", text: err.message })));

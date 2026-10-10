@@ -1,0 +1,107 @@
+name: CI
+
+# Offline checks only: no secrets, no API keys, no paid model calls, nothing published.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  INTENTSQL_NO_DOTENV: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt -e .
+      - run: python -m ruff check intentsql tests scripts experiments
+      - run: python -m mypy intentsql
+      - run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check intentsql/static/app.js
+
+  package:
+    name: Build, clean install and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build==1.2.2.post1
+          python -m build
+          ls -l dist
+      - name: Install the wheel in a fresh virtual environment
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/python -c "import intentsql, importlib.resources as r; print(intentsql.__version__); assert (r.files('intentsql') / 'static' / 'index.html').is_file(); assert (r.files('intentsql') / 'data' / 'dese.db').is_file()"
+      - name: CLI and API smoke test (demo mode, outside the source tree)
+        working-directory: /tmp
+        run: INTENT_SQL=/tmp/clean/bin/intent-sql "$GITHUB_WORKSPACE/scripts/smoke.sh"
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: docker build -t intentsql:ci .
+      - name: Run the container and check health and a demo answer
+        run: |
+          docker run -d --name intentsql -p 127.0.0.1:7862:7862 -e INTENTSQL_PROVIDER=demo intentsql:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7862/api/health && break; sleep 1; done
+          curl -fsS -X POST http://127.0.0.1:7862/api/ask -H "Content-Type: application/json" \
+            -d '{"database": "cyberchase.db", "question": "How many episodes are there?"}' | grep -q '"status":"answered"'
+          docker exec intentsql id -u | grep -qx 10001
+      - if: always()
+        run: docker logs intentsql || true
+
+  security:
+    name: Secret scan and dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # scan the whole history
+          persist-credentials: false
+      - name: gitleaks (pinned release, checksum verified)
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          echo "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 1 .
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: pip-audit (pinned runtime and development dependencies)
+        run: |
+          python -m pip install pip-audit==2.7.3
+          pip-audit -r requirements.txt -r requirements-dev.txt

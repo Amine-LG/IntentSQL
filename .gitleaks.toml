@@ -1,0 +1,11 @@
+# gitleaks configuration: the default rules, plus an allowlist of the exact fake keys used by tests.
+# Allowlist values, never paths: a real key added anywhere, tests included, must still be reported.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake keys in the test suite"
+regexTarget = "match"
+regexes = [
+  '''secret-key-0123456789''',
+]

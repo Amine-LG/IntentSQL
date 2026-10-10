@@ -249,8 +249,9 @@ def ask(body: AskInput) -> dict[str, Any]:
     entry = _entry(body.database)
     client = shared_client()
     if not client.configured:
-        raise HTTPException(400, f"No API key is configured for {client.provider.label}. "
-                                 "Open Settings (the gear icon) to add one or choose another provider.")
+        raise HTTPException(400, "No model is selected." if not client.provider.name else
+                            f"No API key is saved for {client.provider.label}. "
+                            "Use the model button at the top right to add one, or choose demo mode.")
     result = answer(entry.path, body.question)
     return _safe(result.to_dict(debug=True))
 
@@ -261,8 +262,9 @@ def ask_stream(body: AskInput) -> StreamingResponse:
     entry = _entry(body.database)
     client = shared_client()
     if not client.configured:
-        raise HTTPException(400, f"No API key is configured for {client.provider.label}. "
-                                 "Open Settings (the gear icon) to add one or choose another provider.")
+        raise HTTPException(400, "No model is selected." if not client.provider.name else
+                            f"No API key is saved for {client.provider.label}. "
+                            "Use the model button at the top right to add one, or choose demo mode.")
     events: queue.Queue[tuple[str, Any] | None] = queue.Queue()
 
     def run() -> None:
