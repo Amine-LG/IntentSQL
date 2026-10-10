@@ -85,6 +85,7 @@ async function refreshConnection() {
     picker.value = conn.requested === "auto" ? "auto" : conn.provider;
     $("#conn-url").value = conn.url; $("#conn-model").value = conn.model;
     $("#conn-advanced").hidden = conn.provider !== "typesafe";
+    $("#conn-key").closest("label").hidden = conn.provider === "mock";
     $("#conn-provider-note").textContent = `Active: ${conn.label} · model ${conn.model}`;
     $("#conn-status").textContent = ready ? "Ready." : "No API key saved for this provider yet.";
     $("#welcome").hidden = ready;
@@ -108,6 +109,7 @@ $("#theme-select").addEventListener("change", (e) => { store("intentsql.theme", 
 $("#developer").addEventListener("change", (e) => { store("intentsql.developer", e.target.checked); if (state.result) renderHow(); });
 $("#conn-provider").addEventListener("change", () => {
   $("#conn-advanced").hidden = $("#conn-provider").value !== "typesafe";
+  $("#conn-key").closest("label").hidden = $("#conn-provider").value === "mock";
   $("#conn-key").value = "";
 });
 $("#conn-save").addEventListener("click", async (event) => {
@@ -206,13 +208,18 @@ function renderExamples(examples) {
 // ---------------------------------------------------------------- history
 const historyKey = () => `intentsql.history.${state.database}`;
 function remember(question, status) {
-  const items = (store(historyKey()) || []).filter((h) => h.q !== question);
+  const items = loadHistory().filter((h) => h.q !== question);
   items.unshift({ q: question, status, t: Date.now() });
   store(historyKey(), items.slice(0, 30));
   renderHistory();
 }
+function loadHistory() {
+  // Entries are {q, status, t}; earlier versions stored plain strings.
+  return (store(historyKey()) || []).map((h) => (typeof h === "string" ? { q: h, status: "" } : h))
+    .filter((h) => h && typeof h.q === "string" && h.q.trim());
+}
 function renderHistory() {
-  const items = store(historyKey()) || [];
+  const items = loadHistory();
   $("#history-empty").hidden = items.length > 0;
   $("#clear-history").hidden = !items.length;
   $("#history-list").replaceChildren(...items.map((h) => el("li", {}, el("button", {
@@ -302,7 +309,8 @@ async function ask() {
 
 // ---------------------------------------------------------------- answer
 const CONFIDENCE = {
-  answered: (c) => (c === null || c === undefined || c >= 0.8 ? ["ok", "Confident"] : ["warn", "Likely right"]),
+  answered: (c, v) => (c !== null && c !== undefined ? (c >= 0.8 ? ["ok", "Confident"] : ["warn", "Likely right"])
+    : v === null || v === undefined || v >= 0.6 ? ["ok", "Checked"] : ["warn", "Likely right"]),
   ambiguous: () => ["bad", "Uncertain"],
   refused: () => ["bad", "Not answered"],
   error: () => ["bad", "Error"],
@@ -321,15 +329,19 @@ function showAnswer(result) {
   state.reading = state.readings[0];
   $("#answer").hidden = false;
   $("#answer-title").textContent = result.question || question.value.trim();
-  const [tone, label] = (CONFIDENCE[result.status] || CONFIDENCE.error)(result.confidence);
+  let [tone, label] = (CONFIDENCE[result.status] || CONFIDENCE.error)(result.confidence, result.verification);
+  if (result.provider === "mock" && result.sql) [tone, label] = ["warn", "Mock answer"];
   const pill = $("#confidence");
   pill.className = `pill ${tone}`; pill.textContent = label;
   pill.title = result.confidence !== null && result.confidence !== undefined
-    ? `In testing, about ${Math.round(result.confidence * 100)}% of answers with this level of confidence were correct` : "";
+    ? `In testing, about ${Math.round(result.confidence * 100)}% of answers with this level of confidence were correct`
+    : result.verification !== null && result.verification !== undefined
+      ? `Verification score ${Math.round(result.verification * 100)}% (confidence is not calibrated for this provider yet)` : "";
   renderReading();
   renderAlternatives();
   const notice = $("#notice");
   let message = result.message || "";
+  if (result.provider === "mock") message = ["Offline mock provider: decisions are fixed defaults, not a reading of your question.", message].filter(Boolean).join(" ");
   if (result.status === "refused" && !message) message = "IntentSQL could not answer this question.";
   notice.hidden = !message;
   notice.className = "notice" + (result.status === "ambiguous" ? " warn" : ["refused", "error"].includes(result.status) ? " bad" : "");
@@ -458,6 +470,8 @@ function renderHow() {
     ["Provider", providerLabel ? `${providerLabel}${(u.models || []).length ? ` (${u.models.join(", ")})` : ""}` : "—"]];
   if (result.confidence !== null && result.confidence !== undefined) {
     items.push(["Confidence", `about ${Math.round(result.confidence * 100)}% of answers like this were correct in testing`]);
+  } else if (result.verification !== null && result.verification !== undefined) {
+    items.push(["Check", `${Math.round(result.verification * 100)}% that the reading matches the question (not calibrated for this provider)`]);
   }
   const dl = el("dl", { class: "steps" });
   for (const [k, v] of items) dl.append(el("dt", { text: k }), el("dd", { text: v }));

@@ -195,8 +195,17 @@ class ScenarioTest(unittest.TestCase):
         result = answer(self.db, "What are the customer names?", client=jev)
         self.assertEqual(result.status, AMBIGUOUS)
         self.assertLess(result.verification, 0.2)
-        self.assertLess(result.confidence, 0.5)                # calibrated: more likely wrong than right
+        self.assertIsNone(result.confidence)          # the mock provider has no calibration table
         self.assertEqual(len(result.rows), 5)          # the best reading is still shown
+
+    def test_calibration_is_per_provider(self):
+        from intentsql.providers import PROVIDERS
+        jev = ScriptedJev([("^out_", "customer name in", SHOW), ("^verify", "", 0.05)])
+        jev.provider = PROVIDERS["typesafe"]
+        calibrated_result = answer(self.db, "What are the customer names?", client=jev)
+        self.assertLess(calibrated_result.confidence, 0.5)      # more likely wrong than right
+        jev.provider = PROVIDERS["openrouter"]                   # same model family, not yet calibrated
+        self.assertIsNone(answer(self.db, "What are the customer names?", client=jev).confidence)
 
     def test_calibration_is_monotone_and_penalizes_alternatives(self):
         from intentsql.pipeline import calibrated

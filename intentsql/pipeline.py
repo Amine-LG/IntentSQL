@@ -34,6 +34,9 @@ ALTERNATIVE_PENALTY = 0.2  # each result-distinct alternative reading lowers the
 # Calibration: (score lower bound, observed accuracy) by isotonic regression of the score
 # (verification probability - 0.2 x alternatives) against execution accuracy on Spider
 # *train* runs (2,100 predictions, 2026-10-10).  Dev and test were not used.
+# Calibration tables are per provider: a table measured with one model is not reused for
+# another (an uncalibrated provider reports its raw verification score instead).
+UNCALIBRATED_UNCERTAIN = 0.2   # raw verification under which an uncalibrated answer is uncertain
 CALIBRATION = ((0.0, 0.33), (0.12, 0.42), (0.19, 0.59), (0.25, 0.64), (0.34, 0.71), (0.44, 0.76),
                (0.62, 0.84), (0.70, 0.88), (0.86, 0.94), (0.90, 0.97))
 SWITCH_MARGIN = 0.25      # an alternative replaces the main reading only by this probability margin
@@ -57,7 +60,8 @@ class Answer:
     alternatives: list[dict[str, Any]] = field(default_factory=list)
     plan: dict[str, Any] | None = None
     intent: dict[str, Any] | None = None
-    confidence: float | None = None       # calibrated probability that the answer is right
+    confidence: float | None = None       # calibrated probability (None: provider not calibrated)
+    provider: str = ""
     verification: float | None = None     # raw verification probability of the chosen reading
     decisions: list[Decision] = field(default_factory=list)
     exchanges: list[Exchange] = field(default_factory=list)
@@ -71,7 +75,7 @@ class Answer:
             "explanation": self.explanation, "columns": self.columns,
             "rows": [list(r) for r in self.rows], "truncated": self.truncated,
             "message": self.message, "alternatives": self.alternatives,
-            "confidence": self.confidence, "verification": self.verification,
+            "confidence": self.confidence, "verification": self.verification, "provider": self.provider,
             "usage": self.usage.as_dict(), "timings_ms": self.timings_ms,
         }
         if debug:
@@ -222,12 +226,16 @@ def _explain_empty(schema, db_path: str | Path, intent: Intent) -> str | None:
     return "No rows match. Without this condition there would be results: " + "; ".join(parts) + "."
 
 
-def calibrated(verification: float, alternatives: int) -> float:
+CALIBRATIONS: dict[str, tuple[tuple[float, float], ...]] = {"typesafe": CALIBRATION}
+
+
+def calibrated(verification: float, alternatives: int,
+               table: tuple[tuple[float, float], ...] = CALIBRATION) -> float:
     """Probability that an answer is right, from its verification score and the number of
     result-distinct alternative readings (calibrated on Spider train, see CALIBRATION)."""
     score = max(0.0, verification - ALTERNATIVE_PENALTY * alternatives)
-    value = CALIBRATION[0][1]
-    for bound, accuracy in CALIBRATION:
+    value = table[0][1]
+    for bound, accuracy in table:
         if score >= bound:
             value = accuracy
     return value
@@ -309,7 +317,9 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
             result.message = str(exc)
             return result
         result.verification = confidence
-        result.confidence = calibrated(confidence, len(readings) - 1)
+        result.provider = getattr(getattr(client, "provider", None), "name", "") or result.usage.provider
+        table = CALIBRATIONS.get(result.provider)
+        result.confidence = calibrated(confidence, len(readings) - 1, table) if table else None
         t = mark("verify", t)
 
     result.intent = ir.to_dict(chosen.intent)
@@ -333,7 +343,9 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         mark("execute", t)
     if execute and result.columns and _nothing(result.rows, chosen.intent):
         result.message = _explain_empty(grounding.schema, db_path, chosen.intent)
-    if result.confidence is not None and result.confidence < LOW_CONFIDENCE:
+    uncertain = (result.confidence < LOW_CONFIDENCE if result.confidence is not None else
+                 result.verification is not None and result.verification < UNCALIBRATED_UNCERTAIN)
+    if uncertain:
         result.status = AMBIGUOUS
         result.message = ("This reading is uncertain. Check the interpretation"
                           + (" or pick one of the alternatives below." if result.alternatives else "."))

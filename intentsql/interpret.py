@@ -984,7 +984,8 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
             return Interpretation(None, record.decisions, record.uncertain,
                                   followup=missing_output_question(cands))
         key = answers["main_output"].picked
-        record("main_output", "output", "main output", answers["main_output"], key)
+        main_options = missing_output_question(cands)["main_output"].options or {}
+        record("main_output", "output", str(main_options.get(key, key)), answers["main_output"], "value")
         if key.endswith(":value"):
             group = next(o for o in cands.outputs if o.key == key.split(":")[0])
             outputs.append(group.options[0].payload)
