@@ -21,7 +21,7 @@ Please report security problems privately through GitHub's "Report a vulnerabili
 ## Automated checks
 
 CI (`.github/workflows/ci.yml`) has read-only permissions and uses no secrets. On every push it runs:
-- **gitleaks** over the full Git history (pinned release, checksum-verified). `.gitleaks.toml` allowlists exactly one fake test key, by value, never by path.
+- **gitleaks** over the full Git history (pinned release, checksum-verified). `.gitleaks.toml` allowlists the exact fake keys used by the tests, by value, never by path.
 - **pip-audit** on the pinned runtime and development dependencies.
 
 `.pre-commit-config.yaml` offers the same gitleaks check as a local pre-commit hook.

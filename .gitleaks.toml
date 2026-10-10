@@ -8,4 +8,5 @@ description = "Fake keys in the test suite"
 regexTarget = "match"
 regexes = [
   '''secret-key-0123456789''',
+  '''ts-key-0123456789abcdef''',
 ]
