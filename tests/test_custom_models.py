@@ -53,7 +53,7 @@ class CustomModelTest(unittest.TestCase):
         config.settings.cache_clear()
         jev.reset_shared_client()
         self.web = web
-        self.client = TestClient(web.app)
+        self.client = TestClient(web.app, base_url="http://localhost")
         self.seen = []
         self.endpoint(system_one)
 
@@ -218,9 +218,113 @@ class CustomModelTest(unittest.TestCase):
         config.settings.cache_clear()
         with mock.patch.dict(os.environ, {"INTENTSQL_PROVIDER": "custom:gone"}):
             config.settings.cache_clear()
-            self.assertIn("no longer exists", config.settings().notice)
+            self.assertIn("does not exist; no model is selected", config.settings().notice)
         config.settings.cache_clear()
 
+
+    # ---- regressions from the pre-release security review -------------------------
+
+    def test_a_missing_model_never_falls_through_to_another_provider(self):
+        from intentsql import config
+        with mock.patch.dict(os.environ, {"INTENTSQL_PROVIDER": "custom:typo",
+                                          "SYSTEM_ONE_API_KEY": "ts-key-0123456789abcdef"}):
+            config.settings.cache_clear()
+            cfg = config.settings()
+            self.assertEqual(cfg.provider, "")                       # not typesafe
+            self.assertIn("no model is selected", cfg.notice)
+        config.settings.cache_clear()
+
+    def test_removing_the_selected_model_selects_nothing_even_with_a_built_in_key(self):
+        from intentsql import config
+        self.add()
+        with mock.patch.dict(os.environ, {"SYSTEM_ONE_API_KEY": "ts-key-0123456789abcdef"}):
+            config.settings.cache_clear()
+            removed = self.client.delete("/api/custom-models/lab-model").json()
+            self.assertEqual((removed["provider"], removed["active"]), ("", None))
+        config.settings.cache_clear()
+
+    def test_endpoint_overrides_never_redirect_a_custom_models_key(self):
+        from intentsql import config
+        self.add()
+        with mock.patch.dict(os.environ, {"INTENTSQL_URL": "http://other.example/collect",
+                                          "INTENTSQL_MODEL": "other"}):
+            config.settings.cache_clear()
+            self.client.post("/api/connection/test")
+            self.assertEqual(str(self.seen[-1].url), "https://lab.example/v1/systemone")
+            self.assertEqual(json.loads(self.seen[-1].content)["model"], "lab-1")
+            self.client.post("/api/connection", json={"provider": "typesafe", "api_key": "ts-key-0123456789abcdef"})
+            cfg = config.settings()                                # unencrypted remote override: ignored
+            self.assertEqual(cfg.jev_url, "https://api.typesafe.ai/v1/systemone")
+            self.assertIn("Ignored the endpoint override", cfg.notice)
+        config.settings.cache_clear()
+
+    def test_a_new_key_is_untested_again(self):
+        self.add()
+        self.assertEqual(self.card(self.client.post("/api/connection/test").json())["state"], "connected")
+        changed = self.client.post("/api/connection", json={"provider": "custom:lab-model",
+                                                            "api_key": "another-key-98765"}).json()
+        self.assertEqual(self.card(changed)["state"], "untested")
+
+    def test_malformed_replies_are_incompatible_not_crashes(self):
+        self.add()
+        ok = {"team": {"choice": "billing"}, "refund": {"noul": 0.5}}
+        tolerated = [                                      # malformed optional fields are ignored
+            {"answers": ok, "usage": "x"},
+            {"answers": ok, "usage": {"input_tokens": "abc"}},
+            {"answers": {**ok, "team": {"choice": "billing", "probabilities": [1]}}},
+        ]
+        incompatible = [                                   # malformed required fields
+            {"answers": {**ok, "team": {"choice": ["billing"]}}},
+            {"answers": {**ok, "refund": {"noul": True}}},
+            ["not", "an", "object"],
+        ]
+        for reply, expected in [(r, True) for r in tolerated] + [(r, False) for r in incompatible]:
+            self.endpoint(lambda r, reply=reply: httpx.Response(200, json=reply))
+            response = self.client.post("/api/connection/test")
+            self.assertEqual(response.status_code, 200, reply)
+            data = response.json()
+            self.assertEqual(data["ok"], expected, reply)
+            self.assertEqual(self.card(data)["state"], "connected" if expected else "incompatible", reply)
+
+    def test_urls_with_whitespace_or_control_characters_are_refused(self):
+        for url in ("http://local\nhost/v1", "https://lab.example/v 1", "https://lab.example/\tv1"):
+            self.assertEqual(self.add(url=url).status_code, 400, url)
+
+    def test_hand_edited_settings_cannot_crash_or_bypass_the_rules(self):
+        path = Path(self.tmp.name) / "connection.json"
+        from intentsql import config
+        for content in ("[]", "null", json.dumps({"custom": {"x": {"kinds": 5, "url": 3}}}),
+                        json.dumps({"custom": {"evil": {"label": "E", "url": "http://evil.example/x", "model": "m",
+                                                        "max_chars": -5}},
+                                    "keys": {"custom:evil": "k-0123456789", "typesafe": 12345}})):
+            path.write_text(content)
+            config.settings.cache_clear()
+            response = self.client.get("/api/connection")
+            self.assertEqual(response.status_code, 200, content)
+        evil = self.card(response.json(), "custom:evil")
+        self.assertEqual(evil["state"], "incompatible")
+        self.assertIn("https://", evil["message"])
+        self.assertEqual(self.client.post("/api/connection", json={"provider": "custom:evil"}).status_code, 400)
+        self.assertEqual(config.settings().providers["custom:evil"].max_chars_per_request, 60_000)
+        self.assertNotIn("typesafe", config.settings().keys_present)
+
+    def test_changing_scheme_or_port_drops_the_key(self):
+        self.add(url="https://localhost:8443/v1")
+        moved = self.add(id="lab-model", api_key=None, url="http://localhost:9999/other").json()
+        self.assertFalse(self.card(moved)["has_key"])
+
+    def test_writes_from_another_local_port_are_refused(self):
+        other = self.client.post("/api/custom-models", headers={"Origin": "http://localhost:9999"},
+                                 json={"label": "x", "url": "https://a.example/v1", "model": "m"})
+        self.assertEqual(other.status_code, 403)
+        same = self.client.post("/api/custom-models", headers={"Origin": "http://localhost"},
+                                json={"label": "x", "url": "https://a.example/v1", "model": "m"})
+        self.assertEqual(same.status_code, 200)
+
+    def test_settings_repr_never_contains_the_key(self):
+        from intentsql import config
+        self.add()
+        self.assertNotIn(KEY, repr(config.settings()))
 
 if __name__ == "__main__":
     unittest.main()

@@ -239,7 +239,7 @@ function renderCustomDetail(box, p) {
   const key = el("input", { id: "custom-key", type: "password", autocomplete: "off", spellcheck: "false",
     placeholder: p?.has_key ? "A key is saved (leave blank to keep it)" : "Optional: leave empty if the endpoint needs none" });
   box.append(field("Name", name), field("Endpoint URL", url, "https:// (plain http:// only for localhost)."), field("Model ID", model),
-    field("API key", key, "Stored on this computer only; sent only to this endpoint, and dropped if you change the endpoint's host."));
+    field("API key", key, "Stored on this computer only; sent only to this endpoint, and dropped if you change the endpoint's address."));
   const kinds = new Set(p?.kinds || ["choice", "noul"]);
   const kind = (k, label, hint) => el("label", { class: "check" },
     el("input", { type: "checkbox", value: k, class: "custom-kind", checked: kinds.has(k) }), el("span", {}, el("strong", { text: label }), ` — ${hint}`));

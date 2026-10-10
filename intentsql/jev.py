@@ -158,30 +158,39 @@ def _validate(key: str, question: Question, raw: Any) -> Answer:
         raise JevError(f"answer {key} is not an object", kind="protocol")
     if question.kind == "noul":
         p = raw.get("noul")
-        if not isinstance(p, (int, float)) or not math.isfinite(p) or not 0 <= p <= 1:
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not math.isfinite(p) or not 0 <= p <= 1:
             raise JevError(f"answer {key} has no 'noul' probability between 0 and 1", kind="protocol")
         return Answer("noul", p=float(p))
     if question.kind == "score":
         value = raw.get("score")
         top = len(question.levels) - 1
-        if not isinstance(value, (int, float)) or not math.isfinite(value) or not -0.01 <= value <= top + 0.01:
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                or not -0.01 <= value <= top + 0.01):
             raise JevError(f"answer {key} has no valid 'score'", kind="protocol")
         levels = {str(i) for i in range(top + 1)}
-        probabilities = {str(k): float(v) for k, v in (raw.get("probabilities") or {}).items()
-                         if str(k) in levels and isinstance(v, (int, float)) and math.isfinite(v)}
-        return Answer("score", probabilities=probabilities, confidence=raw.get("confidence"),
+        probabilities = {str(k): float(v) for k, v in _mapping(raw.get("probabilities")).items()
+                         if str(k) in levels and _probability(v)}
+        return Answer("score", probabilities=probabilities, confidence=_number(raw.get("confidence")),
                       score=float(value))
     selected = raw.get("choice")
     options = question.options or {}
-    if selected not in options:
+    if not isinstance(selected, str) or selected not in options:
         raise JevError(f"answer {key} has 'choice' {str(selected)[:40]!r}, which is not one of the "
                        "options offered", kind="protocol")
-    probabilities = raw.get("probabilities") or {}
-    clean = {k: float(v) for k, v in probabilities.items()
-             if k in options and isinstance(v, (int, float)) and math.isfinite(v)}
+    clean = {k: float(v) for k, v in _mapping(raw.get("probabilities")).items()
+             if k in options and _probability(v)}
     if not clean:
         clean = {selected: 1.0}
-    return Answer("choice", selected, clean, raw.get("confidence"))
+    return Answer("choice", selected, clean, _number(raw.get("confidence")))
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return {str(k): v for k, v in value.items()} if isinstance(value, dict) else {}
+
+
+def _probability(value: Any) -> bool:
+    return (not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+            and 0 <= value <= 1)
 
 
 def connection_test_questions(kinds: tuple[str, ...]) -> dict[str, Question]:
@@ -361,6 +370,9 @@ class JevClient:
                         usage.retries += 1
                     continue
                 raise JevError(f"{name} did not respond in time.", fatal=True, kind="unavailable") from exc
+            except httpx.InvalidURL as exc:
+                raise JevError(f"{name}: the endpoint URL is not valid.", fatal=True, kind="unsupported"
+                               if self.provider.custom else "request") from exc
             except httpx.HTTPError as exc:
                 if attempt <= self.max_retries:
                     with lock:
@@ -379,7 +391,7 @@ class JevClient:
                                    + (" (is this a web page rather than the API endpoint?)"
                                       if "html" in response.headers.get("content-type", "") else "")
                                    + ".", kind="protocol") from exc
-                reported = (data.get("usage") or {}) if isinstance(data, dict) else {}
+                reported = _mapping(data.get("usage")) if isinstance(data, dict) else {}
                 cost = _number(reported.get("cost"))
                 if cost is None and self.provider.price_per_mtok is not None:
                     tokens = _number(reported.get("input_tokens")) or 0.0
@@ -438,6 +450,8 @@ class JevClient:
             variables = " or ".join(self.provider.key_variables) or "a key"
             raise JevError(f"No API key is set for {self.provider.label}. Add one in Settings "
                            f"or set {variables}.", fatal=True, kind="not_configured")
+        if self.provider.problem:
+            raise JevError(f"{self.provider.label}: {self.provider.problem}", fatal=True, kind="unsupported")
         unsupported = sorted({q.kind for q in questions.values()} - set(self.provider.kinds))
         if self.provider.custom and unsupported:
             raise JevError(f"{self.provider.label} is set up without {' and '.join(k.title() for k in unsupported)} "
@@ -466,14 +480,16 @@ class JevClient:
                 raise JevError(f"{self.provider.label} answered, but not in the System One decision format: "
                                f"{exc}." + (" See docs/CUSTOM_MODELS.md for what IntentSQL expects."
                                             if self.provider.custom else ""), kind="protocol") from None
-            reported = data.get("usage") or {}
+            reported = _mapping(data.get("usage"))
+            model, request_id = data.get("model"), data.get("id")
             exchange = Exchange(purpose, state, body["questions"],
                                 {k: raw_answers[k] for k in chunk},
-                                int(reported.get("input_tokens") or 0),
-                                int(reported.get("output_tokens") or 0),
+                                int(_number(reported.get("input_tokens")) or 0),
+                                int(_number(reported.get("output_tokens")) or 0),
                                 round((time.monotonic() - t0) * 1000),
-                                data.get("model"), cached, self.provider.name,
-                                _number(reported.get("cost")), data.get("id"))
+                                str(model)[:100] if isinstance(model, (str, int, float)) else None,
+                                cached, self.provider.name, _number(reported.get("cost")),
+                                str(request_id)[:100] if isinstance(request_id, (str, int)) else None)
             return answers, exchange
 
         if len(chunks) == 1:
@@ -516,7 +532,9 @@ def _detail(response: httpx.Response, key: str | None) -> str:
 
 
 def _number(value: Any) -> float | None:
-    return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
 
 
 def _chunk(questions: Mapping[str, Question], max_chars: int = MAX_CHARS_PER_REQUEST

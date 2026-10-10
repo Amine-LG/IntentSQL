@@ -55,7 +55,7 @@ log = logging.getLogger("intentsql.web")
 STATIC_DIR = PACKAGE_DIR / "static"
 CONSOLE_MAX_ROWS = 500
 CONSOLE_TIMEOUT_S = 5.0
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "testserver")
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
 app = FastAPI(title="IntentSQL", version=__version__)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(LOCAL_HOSTS))
@@ -64,10 +64,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.middleware("http")
 async def same_origin_writes(request: Request, call_next):
-    """Reject cross-site POST/DELETE (the app serves only its own page)."""
+    """Reject cross-site POST/DELETE: the origin must be this very server (scheme aside, the
+    same host and port), so another local web app on a different port cannot use it either."""
     if request.method in ("POST", "PUT", "DELETE"):
         origin = request.headers.get("origin")
-        if origin and urlsplit(origin).hostname not in ("localhost", "127.0.0.1", "::1"):
+        if origin and urlsplit(origin).netloc.lower() != request.headers.get("host", "").lower():
             return JSONResponse({"detail": "Cross-origin request rejected."}, status_code=403)
     response = await call_next(request)
     if request.url.path.startswith("/static/") or request.url.path == "/":
@@ -130,6 +131,8 @@ def _state(info: Any, model: str, has_key: bool) -> dict[str, Any]:
     name = info.name
     if name == "demo":
         return {"state": "demo", "message": "Fixed default decisions: no model reads your question."}
+    if info.problem:
+        return {"state": "incompatible", "message": info.problem}
     missing = missing_kinds(info)
     if missing:
         return {"state": "incompatible",
@@ -207,15 +210,16 @@ def test_connection(body: TestInput | None = None) -> dict[str, Any]:
         raise HTTPException(404, "Unknown provider")
     if cfg.providers[name].offline:
         return {**get_connection(), "ok": True}
-    client = shared_client() if name == cfg.provider else JevClient(provider=name, model=_saved_model(name))
+    # A fresh client without the development cache: a test must reach the endpoint.
+    client = JevClient(provider=name, model=cfg.jev_model if name == cfg.provider else _saved_model(name),
+                       cache_dir="")
     usage = Usage()
     try:
         client.ask(TEST_STATE, connection_test_questions(client.provider.kinds), usage=usage)
     except JevError as exc:
         return {**get_connection(), "ok": False, "error": str(exc)}
     finally:
-        if client is not shared_client():
-            client.close()
+        client.close()
     return {**get_connection(), "ok": True, "tested": list(client.provider.kinds), "usage": usage.as_dict()}
 
 

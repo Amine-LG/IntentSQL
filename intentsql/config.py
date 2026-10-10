@@ -9,7 +9,8 @@ Recognized variables (all optional):
 ``SYSTEM_ONE_API_KEY`` (or ``TYPESAFE_API_KEY``)  Key for TypeSafe Jev.
 ``LIQUID_API_KEY``                                Key for Liquid AI d1.
 ``INTENTSQL_MODEL`` / ``INTENTSQL_URL``           Advanced: override the model / endpoint of the
-                                                  selected provider.
+                                                  selected built-in provider (never a custom model;
+                                                  https, or http on localhost).
 ``INTENTSQL_BUDGET_USD``                          Stop sending requests once reported cost reaches this.
 ``INTENTSQL_JEV_CACHE``                           Directory for a development response cache.
 ``INTENTSQL_WORKSPACE``                           Where imported databases and settings live.
@@ -26,7 +27,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -64,7 +65,7 @@ def _default_workspace() -> Path:
 class Settings:
     provider: str                       # resolved provider name; "" when no model is selected
     provider_requested: str             # what was configured ("auto" or a name)
-    jev_api_key: str                    # key of the resolved provider (never exposed)
+    jev_api_key: str = field(repr=False)   # key of the resolved provider (never exposed)
     jev_url: str
     jev_model: str
     jev_cache_dir: str | None
@@ -107,7 +108,7 @@ def _custom(saved: dict) -> dict[str, Any]:
     from intentsql.providers import CUSTOM_PREFIX, custom_provider
     raw = saved.get("custom")
     entries = raw if isinstance(raw, dict) else {}
-    return {CUSTOM_PREFIX + slug: custom_provider(slug, entry)
+    return {CUSTOM_PREFIX + str(slug): custom_provider(str(slug), entry)
             for slug, entry in entries.items() if isinstance(entry, dict)}
 
 
@@ -136,12 +137,12 @@ def _keys(workspace: Path) -> dict[str, str]:
     for name in _custom(saved):
         if isinstance(saved_keys.get(name), str) and saved_keys[name]:
             keys[name] = saved_keys[name]
-    return keys
+    return {name: value for name, value in keys.items() if isinstance(value, str)}
 
 
 @lru_cache(maxsize=1)
 def settings() -> Settings:
-    from intentsql.providers import ALIASES, AUTO_ORDER, PROVIDERS
+    from intentsql.providers import ALIASES, AUTO_ORDER, PROVIDERS, url_problem
     files = _file_values()
 
     def get(name: str) -> str:
@@ -156,20 +157,29 @@ def settings() -> Settings:
                  or "auto").strip().lower()
     requested = ALIASES.get(requested, requested)
     notice = ""
-    if requested != "auto" and requested not in providers:
-        notice = (f"The custom model '{requested[7:]}' no longer exists; choose another model."
+    # An explicit choice that does not exist selects no model: it never falls through to
+    # whichever provider happens to have a key ("auto" is used only when asked for).
+    if requested not in ("auto", "none") and requested not in providers:
+        notice = (f"The custom model '{requested[7:]}' does not exist; no model is selected. Choose one."
                   if requested.startswith("custom:") else
-                  f"The provider '{requested}' is not supported in this version; choose another model.")
-        requested = "auto"
+                  f"The provider '{requested}' is not supported in this version; no model is selected. "
+                  "Choose one.")
+        requested = "none"
     if requested == "auto":
         name = next((n for n in AUTO_ORDER if keys.get(n)), "")
+    elif requested == "none":
+        name = ""
     else:
         name = requested
     info = providers.get(name)
     url = model = ""
-    if info is not None:
-        # Advanced overrides from the environment only; the app stores a model per provider.
+    if info is not None and not info.custom:
+        # Advanced overrides from the environment, for built-in providers only (a custom
+        # model's key goes only to its own URL). An override must meet the same URL rules.
         url = get("INTENTSQL_URL") or (get("SYSTEM_ONE_URL") if name == "typesafe" else "")
+        if url and url_problem(url):
+            notice = f"Ignored the endpoint override in INTENTSQL_URL: {url_problem(url)}"
+            url = ""
         raw_models = saved.get("models")
         chosen = raw_models.get(name, "") if isinstance(raw_models, dict) else ""
         model = (get("INTENTSQL_MODEL") or (get("SYSTEM_ONE_MODEL") if name == "typesafe" else "")

@@ -43,7 +43,7 @@ A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`). Python package vers
 - **Custom decision models.** Any endpoint that implements the System One protocol can be added, tested, selected, edited and removed, in the app or with `intent-sql custom`, without code changes.
   - Custom models are grouped apart from the built-ins and labelled "not verified by IntentSQL".
   - The connection test sends one question per declared decision type. Wrong-format replies are reported as *Incompatible*, naming what was wrong.
-  - HTTPS is required except on localhost. A saved key is dropped when the endpoint's host changes.
+  - HTTPS is required except on localhost. A saved key is dropped when the endpoint's scheme, host or port changes.
 - OpenRouter and OpenJEV, used during development, were removed: both development keys were rejected and neither produced any reported result.
 
 ### Decision inspector

@@ -105,7 +105,7 @@ Each feature, with examples and **known limitations**, is listed in [docs/CAPABI
 
 | | |
 |---|---|
-| **Implemented and tested offline** | Everything above: 135 tests with a scripted model double; ruff and mypy clean; browser-tested on desktop and mobile, in light and dark themes; clean wheel install; Docker image; CLI and API smoke tests in demo mode and with custom models against a local protocol stub |
+| **Implemented and tested offline** | Everything above: 145 tests with a scripted model double; ruff and mypy clean; browser-tested on desktop and mobile, in light and dark themes; clean wheel install; Docker image; CLI and API smoke tests in demo mode and with custom models against a local protocol stub |
 | **Validated over real HTTP** | Custom models: add, test, select, edit and remove, against a local protocol stub and a chat-style API (reported *Incompatible*), in the browser and in the smoke test. Liquid AI d1: the real endpoint and its key-rejection path, with an invalid key. No d1 answers yet, because no Liquid key was available |
 | **Measured historically (TypeSafe Jev)** | The results below, on code from 2026-10-09. The code has changed since (provider layer, module split, new features covered by offline tests). The latest build has not been measured, because the TypeSafe account had no credits (HTTP 402) |
 

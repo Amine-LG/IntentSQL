@@ -190,6 +190,9 @@ def cmd_provider(args: argparse.Namespace) -> int:
     from intentsql.jev import TEST_STATE, JevError, Usage, connection_test_questions, shared_client
     cfg = settings()
     client = shared_client()
+    if args.test and cfg.provider and cfg.provider != "demo":
+        from intentsql.jev import JevClient
+        client = JevClient(cache_dir="")          # a test must reach the endpoint, not a cache
     info = client.describe()
     if cfg.notice:
         print(cfg.notice)
@@ -272,8 +275,11 @@ def cmd_custom(args: argparse.Namespace) -> int:
     except WorkspaceError as exc:
         print(exc)
         return 1
-    print(f"Saved {name}" + (" and selected it" if args.use else "")
+    locked = args.use and settings().locked_by_environment and settings().provider != name
+    print(f"Saved {name}" + (" and selected it" if args.use and not locked else "")
           + ". It is not verified by IntentSQL: run 'intent-sql provider --test' after selecting it.")
+    if locked:
+        print(f"Note: INTENTSQL_PROVIDER is set, so {settings().provider or 'no model'} stays in use.")
     return 0
 
 

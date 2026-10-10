@@ -32,9 +32,9 @@ intent-sql custom remove custom:my-model
 ### Rules IntentSQL enforces
 
 - **URLs.** Use `https://`. Plain `http://` is accepted only for `localhost`, `127.0.0.1` and `::1`. URLs may not contain credentials, a `?query` or a `#fragment`; put keys in the API key field.
-- **Keys.** A key is optional. It is stored server-side in the workspace settings (owner-only file) and never returned to the browser. It is sent only as `Authorization: Bearer <key>` to that endpoint, and redirects are not followed. When you change an endpoint's host, its saved key is dropped, so a key is never sent to a host it was not entered for.
+- **Keys.** A key is optional. It is stored server-side in the workspace settings (owner-only file) and never returned to the browser. It is sent only as `Authorization: Bearer <key>` to that endpoint, and redirects are not followed. When you change an endpoint's scheme, host or port, its saved key is dropped, so a key is never sent to an address it was not entered for. The `INTENTSQL_URL` and `INTENTSQL_MODEL` overrides apply to built-in providers only.
 - **Decision types.** IntentSQL asks **Choice** and **Noul** questions. A model saved without both can be kept, but not selected. **Score** is optional and not used by IntentSQL yet.
-- **No fallback.** If a custom model fails, the error names it. IntentSQL never switches to another model or to demo mode.
+- **No fallback.** If a custom model fails, the error names it. IntentSQL never switches to another model or to demo mode. Deleting the selected custom model, or naming one that does not exist in `INTENTSQL_PROVIDER`, leaves no model selected.
 
 ## The protocol
 

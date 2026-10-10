@@ -149,9 +149,10 @@ def connection_file() -> Path:
 
 def saved_connection() -> dict[str, Any]:
     try:
-        return json.loads(connection_file().read_text(encoding="utf-8"))
+        data = json.loads(connection_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -161,7 +162,6 @@ def _dict(value: Any) -> dict[str, Any]:
 _KEY_SHAPE = re.compile(r"^[A-Za-z0-9_\-.:]{16,300}$")
 _CUSTOM_KEY_SHAPE = re.compile(r"^[\x21-\x7e]{8,500}$")       # printable ASCII, no spaces
 _MODEL_ID = re.compile(r"^[A-Za-z0-9._:/@+\-]{1,100}$")
-_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
 def _write_connection(current: dict[str, Any]) -> None:
@@ -194,6 +194,8 @@ def save_connection(*, provider: str | None = None, api_key: str | None = None,
     if name is not None:
         if name not in providers:
             raise WorkspaceError(f"Unknown provider {provider}")
+        if providers[name].problem:
+            raise WorkspaceError(providers[name].problem)
         missing = missing_kinds(providers[name])
         if missing:
             raise WorkspaceError(f"{providers[name].label} cannot be used: IntentSQL asks "
@@ -217,6 +219,9 @@ def save_connection(*, provider: str | None = None, api_key: str | None = None,
         keys[target] = key
     current["keys"] = keys
     _write_connection(current)
+    if target and (api_key or clear_key):
+        from intentsql.jev import forget_state
+        forget_state(target)          # a new or removed key has not been tested
 
 
 def _check_key(key: str, *, custom: bool) -> None:
@@ -227,24 +232,11 @@ def _check_key(key: str, *, custom: bool) -> None:
 
 
 def _check_url(url: str) -> str:
-    from urllib.parse import urlsplit
+    from intentsql.providers import url_problem
     url = url.strip()
-    try:
-        parts = urlsplit(url)
-        host = (parts.hostname or "").lower()
-        parts.port                                  # noqa: B018 -- raises on an invalid port
-    except ValueError:
-        raise WorkspaceError("That is not a valid URL.") from None
-    if len(url) > 300 or not host or parts.scheme not in ("https", "http"):
-        raise WorkspaceError("Enter the endpoint's full URL, for example https://example.com/v1/systemone.")
-    if parts.username or parts.password:
-        raise WorkspaceError("Do not put credentials in the URL; use the API key field.")
-    if parts.query or parts.fragment:
-        raise WorkspaceError("The URL must not contain ?query or #fragment parts; put any key in the "
-                             "API key field.")
-    if parts.scheme == "http" and host not in _LOOPBACK:
-        raise WorkspaceError("Use https:// (plain http:// is allowed only for localhost), so the key and "
-                             "your questions are not sent unencrypted.")
+    problem = url_problem(url)
+    if problem:
+        raise WorkspaceError(problem)
     return url
 
 
@@ -261,11 +253,9 @@ def save_custom_model(*, slug: str | None, label: str, url: str, model: str,
                       api_key: str | None = None, clear_key: bool = False, select: bool = False) -> str:
     """Add (slug None) or edit a custom decision model; returns its provider name.
 
-    A saved key is dropped when the endpoint's host changes, so a key is never sent to a
-    host it was not entered for."""
-    from urllib.parse import urlsplit
-
-    from intentsql.providers import CUSTOM_MAX_CHARS, CUSTOM_PREFIX, KINDS
+    A saved key is dropped when the endpoint's scheme, host or port changes, so a key is
+    never sent anywhere it was not entered for."""
+    from intentsql.providers import CUSTOM_MAX_CHARS, CUSTOM_PREFIX, KINDS, endpoint_identity
     current = saved_connection()
     custom = _dict(current.get("custom"))
     label = " ".join(str(label).split())
@@ -275,6 +265,8 @@ def save_custom_model(*, slug: str | None, label: str, url: str, model: str,
     model = model.strip()
     if not _MODEL_ID.match(model):
         raise WorkspaceError("Enter the model ID the endpoint expects (letters, digits and . _ : / @ + -).")
+    if kinds is not None and not all(isinstance(k, str) for k in kinds):
+        raise WorkspaceError(f"Decision types must be among {', '.join(KINDS)}.")
     chosen = [k for k in KINDS if k in (kinds if kinds is not None else ("choice", "noul"))]
     if not chosen or len(chosen) != len(set(kinds or chosen)):
         raise WorkspaceError(f"Decision types must be among {', '.join(KINDS)}.")
@@ -287,7 +279,7 @@ def save_custom_model(*, slug: str | None, label: str, url: str, model: str,
     name = CUSTOM_PREFIX + slug
     keys = _dict(current.get("keys"))
     previous = _dict(custom.get(slug))
-    if previous and urlsplit(str(previous.get("url", ""))).hostname != urlsplit(url).hostname:
+    if previous and endpoint_identity(str(previous.get("url", ""))) != endpoint_identity(url):
         keys.pop(name, None)
     if clear_key:
         keys.pop(name, None)
@@ -311,8 +303,8 @@ def save_custom_model(*, slug: str | None, label: str, url: str, model: str,
 
 
 def remove_custom_model(slug: str) -> None:
-    """Delete a custom model and its key. If it was selected, no model is selected afterwards
-    unless a built-in provider has a key (never demo)."""
+    """Delete a custom model and its key. If it was selected, no model is selected afterwards:
+    never demo, and never another provider the user did not choose."""
     from intentsql.providers import CUSTOM_PREFIX
     current = saved_connection()
     custom = _dict(current.get("custom"))
@@ -324,7 +316,7 @@ def remove_custom_model(slug: str) -> None:
     _dict(current.get("keys")).pop(name, None)
     _dict(current.get("models")).pop(name, None)
     if current.get("provider") == name:
-        current["provider"] = "auto"
+        current["provider"] = "none"
     _write_connection(current)
     from intentsql.jev import forget_state
     forget_state(name)

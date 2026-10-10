@@ -14,7 +14,9 @@ and the demo provider is used only when it is chosen: it is never a fallback.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class Provider:
     docs: str = ""
     custom: bool = False         # configured by the user, not verified by IntentSQL
     kinds: tuple[str, ...] = ("choice", "noul")   # decision types the endpoint supports
+    problem: str = ""            # why a saved custom model cannot be used (e.g. an invalid URL)
 
     @property
     def offline(self) -> bool:
@@ -73,15 +76,61 @@ CUSTOM_PREFIX = "custom:"
 CUSTOM_MAX_CHARS = 60_000
 
 
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+_MODEL_ID = re.compile(r"^[A-Za-z0-9._:/@+\-]{1,100}$")
+
+
+def url_problem(url: str) -> str:
+    """Why a decision-endpoint URL is not acceptable ("" when it is): https, or http on
+    loopback only; no credentials, query, fragment, whitespace or control characters."""
+    if not isinstance(url, str) or not url or len(url) > 300 or any(c.isspace() or ord(c) < 32 for c in url):
+        return "Enter the endpoint's full URL, for example https://example.com/v1/systemone."
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        parts.port                                  # noqa: B018 -- raises on an invalid port
+    except ValueError:
+        return "That is not a valid URL."
+    if not host or parts.scheme not in ("https", "http"):
+        return "Enter the endpoint's full URL, for example https://example.com/v1/systemone."
+    if parts.username or parts.password:
+        return "Do not put credentials in the URL; use the API key field."
+    if parts.query or parts.fragment:
+        return "The URL must not contain ?query or #fragment parts; put any key in the API key field."
+    if parts.scheme == "http" and host not in LOOPBACK:
+        return ("Use https:// (plain http:// is allowed only for localhost), so the key and "
+                "your questions are not sent unencrypted.")
+    return ""
+
+
+def endpoint_identity(url: str) -> tuple[str, str, int | None]:
+    """Scheme, host and port: a saved key belongs to exactly this."""
+    try:
+        parts = urlsplit(str(url))
+        return parts.scheme.lower(), (parts.hostname or "").lower().rstrip("."), parts.port
+    except ValueError:
+        return "", "", None
+
+
 def custom_provider(slug: str, entry: dict) -> Provider:
-    """A user-configured endpoint, from its saved settings entry."""
+    """A user-configured endpoint, from its saved settings entry (re-validated on load:
+    the settings file may have been edited by hand)."""
     model = str(entry.get("model") or "")
-    kinds = tuple(k for k in KINDS if k in (entry.get("kinds") or REQUIRED_KINDS))
-    max_chars = entry.get("max_chars")
+    url = str(entry.get("url") or "")
+    raw_kinds = entry.get("kinds")
+    kinds = tuple(k for k in KINDS if k in raw_kinds) if isinstance(raw_kinds, list) else REQUIRED_KINDS
+    raw_size = entry.get("max_chars")
+    max_chars = (raw_size if isinstance(raw_size, int) and not isinstance(raw_size, bool)
+                 and 2_000 <= raw_size <= 1_000_000 else CUSTOM_MAX_CHARS)
+    problem = url_problem(url)
+    if not problem and not _MODEL_ID.match(model):
+        problem = "The saved model ID is not valid."
+    if problem:
+        problem = f"Edit this model: {problem}"
     return Provider(
-        CUSTOM_PREFIX + slug, str(entry.get("label") or slug), model, str(entry.get("url") or ""),
-        (model,), (), max_chars_per_request=max_chars if isinstance(max_chars, int) else CUSTOM_MAX_CHARS,
-        custom=True, kinds=kinds)
+        CUSTOM_PREFIX + slug, str(entry.get("label") or slug)[:40], model, url,
+        (model,), (), max_chars_per_request=max_chars,
+        custom=True, kinds=kinds, problem=problem)
 
 
 def missing_kinds(info: Provider) -> list[str]:

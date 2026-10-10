@@ -24,7 +24,7 @@ class WebTest(unittest.TestCase):
         config.settings.cache_clear()
         jev.reset_shared_client()
         self.web = web
-        self.client = TestClient(web.app)
+        self.client = TestClient(web.app, base_url="http://localhost")
         self.shop = make_shop(self.tmp.name)
 
     def tearDown(self):
