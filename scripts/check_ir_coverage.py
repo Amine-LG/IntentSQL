@@ -21,7 +21,7 @@ from intentsql.schema import load_schema
 
 def main(split: str, limit: int | None = None, show: int = 8) -> None:
     root = spider_root()
-    data = json.loads((root / SPLIT_FILES[split][0]).read_text())[:limit]
+    data = json.loads((root / SPLIT_FILES[split][0]).read_text(encoding="utf-8"))[:limit]
     outcome: Counter[str] = Counter()
     shown = 0
     for index, item in enumerate(data):

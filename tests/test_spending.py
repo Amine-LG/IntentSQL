@@ -42,7 +42,7 @@ class SpendingTest(unittest.TestCase):
             second.reserve(0.7)
         lower = Budget(0.5, self.ledger)
         self.assertEqual(Budget(None, self.ledger).limit, 0.5)
-        self.assertEqual(json.loads(self.ledger.read_text())["requests"], 1)
+        self.assertEqual(json.loads(self.ledger.read_text(encoding="utf-8"))["requests"], 1)
         self.assertIsNotNone(lower)
 
     def test_concurrent_reservations_never_pass_the_limit(self):

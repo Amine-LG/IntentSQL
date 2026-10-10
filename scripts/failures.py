@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sys
 
-report = json.load(open(sys.argv[1]))
+report = json.load(open(sys.argv[1], encoding="utf-8"))
 if report["meta"].get("split") == "test":
     sys.exit("refusing to print held-out test cases")
 filt = sys.argv[2] if len(sys.argv) > 2 else None

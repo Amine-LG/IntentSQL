@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -77,11 +78,9 @@ class Budget:
                 return
             self.ledger.parent.mkdir(parents=True, exist_ok=True)
             with open(self.ledger.with_suffix(".lock"), "a+") as lock_file:
-                try:
+                if sys.platform != "win32":            # Windows: the thread lock only
                     import fcntl
                     fcntl.flock(lock_file, fcntl.LOCK_EX)
-                except ImportError:                    # Windows: thread lock only
-                    pass
                 try:
                     state = json.loads(self.ledger.read_text(encoding="utf-8"))
                     if not isinstance(state, dict):

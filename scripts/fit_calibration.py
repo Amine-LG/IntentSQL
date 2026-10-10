@@ -20,7 +20,7 @@ from intentsql.pipeline import ALTERNATIVE_PENALTY  # noqa: E402
 def main(provider: str, paths: list[str]) -> None:
     points = []
     for path in paths:
-        report = json.load(open(path))
+        report = json.load(open(path, encoding="utf-8"))
         meta = report.get("meta", {})
         if meta.get("split") != "train":
             sys.exit(f"{path}: calibration is fitted on train reports only")

@@ -26,7 +26,7 @@ class Unconvertible(ValueError):
 @lru_cache(maxsize=4)
 def _tables(split: str) -> dict[str, dict]:
     path = spider_root() / SPLIT_FILES[split][2]
-    return {db["db_id"]: db for db in json.loads(Path(path).read_text())}
+    return {db["db_id"]: db for db in json.loads(Path(path).read_text(encoding="utf-8"))}
 
 
 class _Converter:

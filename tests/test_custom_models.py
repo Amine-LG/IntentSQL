@@ -115,7 +115,7 @@ class CustomModelTest(unittest.TestCase):
         moved = self.add(id="lab-model", api_key=None, url="https://elsewhere.example/decide").json()
         self.assertFalse(self.card(moved)["has_key"])
 
-        stored = json.loads((Path(self.tmp.name) / "connection.json").read_text())
+        stored = json.loads((Path(self.tmp.name) / "connection.json").read_text(encoding="utf-8"))
         if os.name == "posix":                                     # Windows has no owner-only mode bits
             self.assertEqual((Path(self.tmp.name) / "connection.json").stat().st_mode & 0o777, 0o600)
         self.assertNotIn("custom:lab-model", stored["keys"])
@@ -297,7 +297,7 @@ class CustomModelTest(unittest.TestCase):
                         json.dumps({"custom": {"evil": {"label": "E", "url": "http://evil.example/x", "model": "m",
                                                         "max_chars": -5}},
                                     "keys": {"custom:evil": "k-0123456789", "typesafe": 12345}})):
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             config.settings.cache_clear()
             response = self.client.get("/api/connection")
             self.assertEqual(response.status_code, 200, content)
