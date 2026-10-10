@@ -31,6 +31,8 @@ from typing import Any
 
 import httpx
 
+from intentsql.spending import Budget, LimitReached, billed, reservation
+
 RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 FATAL_STATUS = {401, 402, 403, 404, 422}
 MAX_QUESTIONS_PER_REQUEST = 160
@@ -250,26 +252,6 @@ class BudgetExceeded(JevError):
     """The configured spending limit has been reached; no further requests are sent."""
 
 
-class _Budget:
-    """Process-wide cost accounting against an optional limit (INTENTSQL_BUDGET_USD)."""
-
-    def __init__(self, limit: float | None) -> None:
-        self.limit = limit
-        self.spent = 0.0
-        self.requests = 0
-        self.lock = threading.Lock()
-
-    def check(self) -> None:
-        with self.lock:
-            if self.limit is not None and self.spent >= self.limit:
-                raise BudgetExceeded(f"The spending limit of ${self.limit:.2f} has been reached "
-                                     f"(${self.spent:.4f} spent); no further Jev requests are sent.",
-                                     fatal=True, kind="budget")
-
-    def add(self, cost: float | None) -> None:
-        with self.lock:
-            self.requests += 1
-            self.spent += cost or 0.0
 
 
 class JevClient:
@@ -294,7 +276,10 @@ class JevClient:
         # The cache is per provider and model: answers from one never stand in for another.
         self.cache_dir = (Path(cache) / self.provider.name / self.model.replace("/", "_")
                           if cache else None)
-        self.budget = _Budget(budget_usd if budget_usd is not None else cfg.budget_usd)
+        # The spending guard (intentsql/spending.py): per-attempt reservations against the
+        # limit; persistent across runs when INTENTSQL_SPEND_LEDGER names a file.
+        self.budget = Budget(budget_usd if budget_usd is not None else cfg.budget_usd,
+                             None if budget_usd is not None else cfg.spend_ledger)
         self._http = httpx.Client(timeout=timeout, http2=False,
                                   limits=httpx.Limits(max_keepalive_connections=16))
         self._pool = ThreadPoolExecutor(max_workers=max_parallel)
@@ -309,7 +294,7 @@ class JevClient:
         return {"provider": self.provider.name, "label": self.provider.label, "url": self.url,
                 "model": self.model, "has_key": bool(self._api_key),
                 "budget_usd": self.budget.limit, "spent_usd": round(self.budget.spent, 6),
-                "requests": self.budget.requests}
+                "requests": self.budget.requests, "spend_ledger": bool(self.budget.ledger)}
 
     def close(self) -> None:
         self._http.close()
@@ -353,7 +338,8 @@ class JevClient:
                 return json.loads(cache.read_text(encoding="utf-8")), True
             except (OSError, ValueError):
                 pass
-        self.budget.check()
+        body_chars = len(json.dumps(body, ensure_ascii=False))
+        price = self.provider.price_per_mtok
         headers = {"Content-Type": "application/json", "Accept": "application/json",
                    "User-Agent": "IntentSQL/1.0"}
         if self._api_key:
@@ -362,18 +348,26 @@ class JevClient:
         name = self.provider.label
         while True:
             attempt += 1
+            # Every attempt, retries included, reserves an upper bound of its cost first.
+            try:
+                held = self.budget.reserve(reservation(body_chars, price))
+            except LimitReached as exc:
+                raise BudgetExceeded(str(exc), fatal=True, kind="budget") from None
             try:
                 response = self._http.post(self.url, json=body, headers=headers)
+            except httpx.InvalidURL as exc:
+                self.budget.settle(held, 0.0)           # never sent
+                raise JevError(f"{name}: the endpoint URL is not valid.", fatal=True, kind="unsupported"
+                               if self.provider.custom else "request") from exc
             except httpx.TimeoutException as exc:
+                self.budget.settle(held, held)          # may have been processed and billed
                 if attempt <= self.max_retries:
                     with lock:
                         usage.retries += 1
                     continue
                 raise JevError(f"{name} did not respond in time.", fatal=True, kind="unavailable") from exc
-            except httpx.InvalidURL as exc:
-                raise JevError(f"{name}: the endpoint URL is not valid.", fatal=True, kind="unsupported"
-                               if self.provider.custom else "request") from exc
             except httpx.HTTPError as exc:
+                self.budget.settle(held, held)
                 if attempt <= self.max_retries:
                     with lock:
                         usage.retries += 1
@@ -383,26 +377,29 @@ class JevClient:
                 raise JevError(f"Could not reach {name}{where}. Check the network"
                                + (" and the URL" if self.provider.custom else "") + ".", fatal=True,
                                kind="unavailable") from exc
+            except BaseException:
+                self.budget.settle(held, held)
+                raise
             if response.status_code == 200:
                 try:
                     data = response.json()
                 except ValueError as exc:
+                    self.budget.settle(held, held)
                     raise JevError(f"{name} answered with something that is not JSON"
                                    + (" (is this a web page rather than the API endpoint?)"
                                       if "html" in response.headers.get("content-type", "") else "")
                                    + ".", kind="protocol") from exc
                 reported = _mapping(data.get("usage")) if isinstance(data, dict) else {}
-                cost = _number(reported.get("cost"))
-                if cost is None and self.provider.price_per_mtok is not None:
-                    tokens = _number(reported.get("input_tokens")) or 0.0
-                    cost = tokens * self.provider.price_per_mtok / 1_000_000     # an estimate
-                self.budget.add(cost)
+                tokens = _number(reported.get("input_tokens"))
+                self.budget.settle(held, billed(tokens, _number(reported.get("cost")), price, held), tokens)
                 if cache:
                     cache.parent.mkdir(parents=True, exist_ok=True)
                     tmp = cache.with_suffix(".tmp")
                     tmp.write_text(json.dumps(data), encoding="utf-8")
                     tmp.replace(cache)
                 return data, False
+            # A server error may have been processed and billed; a rejected (4xx) request was not.
+            self.budget.settle(held, held if response.status_code >= 500 else 0.0)
             if response.status_code in RETRYABLE and attempt <= self.max_retries:
                 with lock:
                     usage.retries += 1

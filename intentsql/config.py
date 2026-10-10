@@ -11,7 +11,10 @@ Recognized variables (all optional):
 ``INTENTSQL_MODEL`` / ``INTENTSQL_URL``           Advanced: override the model / endpoint of the
                                                   selected built-in provider (never a custom model;
                                                   https, or http on localhost).
-``INTENTSQL_BUDGET_USD``                          Stop sending requests once reported cost reaches this.
+``INTENTSQL_BUDGET_USD``                          Spending limit: a request is not sent if it could pass
+                                                  it (see intentsql/spending.py).
+``INTENTSQL_SPEND_LEDGER``                        A file that keeps the spending totals across runs and
+                                                  processes, so the limit is cumulative.
 ``INTENTSQL_JEV_CACHE``                           Directory for a development response cache.
 ``INTENTSQL_WORKSPACE``                           Where imported databases and settings live.
 ``INTENTSQL_NO_DOTENV``                           Set to 1 to ignore ``.env``-style files.
@@ -71,6 +74,7 @@ class Settings:
     jev_cache_dir: str | None
     workspace: Path
     budget_usd: float | None = None
+    spend_ledger: str | None = None      # file with cumulative spending totals (optional)
     keys_present: tuple[str, ...] = ()  # providers that have a key (names only)
     locked_by_environment: bool = False # INTENTSQL_PROVIDER is set: the app cannot change it
     notice: str = ""                    # e.g. a saved provider that is no longer supported
@@ -190,7 +194,7 @@ def settings() -> Settings:
         jev_api_key=keys.get(name, ""), jev_url=url or (info.url if info else ""),
         jev_model=model or (info.model if info else ""),
         jev_cache_dir=get("INTENTSQL_JEV_CACHE") or None, workspace=workspace,
-        budget_usd=float(budget) if budget else None,
+        budget_usd=float(budget) if budget else None, spend_ledger=get("INTENTSQL_SPEND_LEDGER") or None,
         keys_present=tuple(n for n in providers if keys.get(n)),
         locked_by_environment=bool(environment), notice=notice, providers=providers,
     )
