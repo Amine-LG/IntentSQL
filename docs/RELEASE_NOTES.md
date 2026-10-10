@@ -16,7 +16,10 @@ The first stable release. You ask a SQLite database a question in plain English,
   - **78.0%** on a 600-question Spider test sample (public labels; not an official leaderboard score);
   - 87.5% of confident answers correct.
 - **Open to any compatible model.** TypeSafe Jev (recommended) and Liquid AI d1 are built in. You can add your own System One endpoint in the app or the CLI, and IntentSQL tests whether it answers in the right format. Demo mode is clearly labelled, and there is never a silent fallback.
-- **The Alpha's look, the 1.0's usability.** The green-black and lime studio palette and the decision timeline are back. They come with the newer layout: model setup, history, CSV export, alternative readings, a mobile layout, and light and dark themes.
+- **The Alpha's look, the 1.0's usability.** The green-black and lime studio palette and the decision timeline are back. They come with the newer layout:
+  - on wide screens the answer sits beside its decisions;
+  - model setup, history, CSV export and alternative readings;
+  - layouts from phone to 2560 px, in light and dark themes.
 - **Safe by construction.** Execution is read-only with row and time limits. Keys stay server-side. Writes from other sites or local ports are blocked. There is a cumulative spending guard.
 
 ## Since the Alpha (v0.1.0-alpha.1)

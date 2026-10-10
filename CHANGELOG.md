@@ -19,6 +19,13 @@ The first stable release. 1.0.0 is 1.0.0-beta.1 plus the changes below; the Beta
   - the green-black and lime studio palette (default), and cream with forest green in light mode;
   - mono micro-labels, the "The query, made clear." headline, the pipeline stepper with a stats strip, and numbered examples.
 - The decision inspector now uses the Alpha's numbered timeline: the exact question asked, CHOICE/NOUL pills, the chosen option and probability bars.
+- The layout uses the whole screen:
+  - on wide screens, the question box sits beside the examples, and the answer beside a sticky decision timeline;
+  - narrower screens stack;
+  - the pipeline is shown from the start, with what each step does.
+
+  Checked in a browser from 360 to 2560 px, at 125% and 200% zoom, in light and dark.
+- Read-only made visible: a note under the question box; the SQL console explains refused writes.
 - Other interface changes:
   - a one-click theme toggle;
   - a developer view in the inspector;

@@ -3,7 +3,7 @@
 **The query, made clear.** Ask a SQLite database a question in plain English. IntentSQL shows what it understood, every decision behind the SQL, the read-only query it ran, and the result.
 
 ![IntentSQL answering "Which five districts have the highest per-pupil expenditure?" with TypeSafe Jev](docs/images/answer-jev.png)
-<sub>A real answer from TypeSafe Jev (`jev-1.13.0`): two model calls, 10,678 input tokens, about $0.0005.</sub>
+<sub>A real answer from TypeSafe Jev (`jev-1.13.0`): two model calls, 10,678 input tokens, about $0.0005. Jev's check was unsure this time, so the answer is flagged *Uncertain* and the other reading is offered beside it.</sub>
 
 ## Why it works this way
 
@@ -23,7 +23,8 @@ Every step is visible. **How IntentSQL decided** is a timeline of the decisions,
 
 It also shows the values found, the joins and plan, the verification, and the SQL. Per-decision probabilities are not the chance that the answer is right. That is the separate, calibrated confidence on the answer.
 
-![The decision timeline: exact questions, choices and Jev's probabilities](docs/images/decisions-jev.png)
+![The answer beside its decision timeline: exact questions, choices and Jev's probabilities](docs/images/decisions-jev.png)
+<sub>The same answer, scrolled: results and SQL on the left; on the right, each decision with the exact question Jev received and its probabilities.</sub>
 
 ## What it supports
 
@@ -35,6 +36,26 @@ It also shows the values found, the joins and plan, the verification, and the SQ
 - top-N per group, date parts, quarters and relative periods.
 
 Each feature is listed with examples, and with what is **not** supported, in [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+
+**Read-only.** IntentSQL only reads data. It never adds, changes or deletes records, and it works on a copy of each database you open, so the original file is never touched.
+
+## What changed since the Alpha
+
+[`v0.1.0-alpha.1`](https://github.com/Amine-LG/IntentSQL/tree/v0.1.0-alpha.1) was an experiment in letting a decision model steer a query planner, one stage at a time. 1.0 rebuilds the core and keeps what worked: bounded questions, exact SQL, and visible decisions.
+
+| | Alpha (v0.1.0-alpha.1) | 1.0 |
+|---|---|---|
+| **Interpretation** · rebuilt | A chain of planner "skills", each asking Jev about one stage, with code-defined repair loops | Code builds every candidate reading up front; Jev answers one parallel round of bounded questions; deterministic assembly into a typed plan |
+| **SQL coverage** · much broader | One foreign-key hop, flat AND/OR, up to two grouping keys and one HAVING, scalar aggregates | Multi-hop, self- and outer joins; correlated, scalar and FROM subqueries; INTERSECT/EXCEPT; anti-joins; nested aggregates; percentages |
+| **Arithmetic and dates** · new / improved | Date ranges and rounding; no arithmetic | Derived measures (quantity × price, differences, durations, elapsed time), date parts, quarters, relative periods |
+| **Top-N per group** · new | Per-group MIN/MAX only; ranking requests refused | "The top 3 in each…" via window functions |
+| **Checking the answer** · new / improved | A whole-request coverage review | Readings that differ by one decision *and give different results* are run and compared; Jev checks each plain-English reading against its results |
+| **Confidence** · new | Jev's raw per-choice confidence | Confidence calibrated on measured accuracy; uncertain answers flagged, with the alternatives |
+| **Decision inspector** · improved | Exact questions, probabilities and raw exchanges, as a list of calls | The same honest data as a staged timeline (found → decided → planned → checked → SQL), beside the result on wide screens |
+| **Model setup** · improved | Connection settings for Jev, OpenJEV, a local Laya adapter, or a custom endpoint | Guided first run; *Connected* only after a real answer; custom System One endpoints tested for compatibility; never a silent fallback |
+| **Install and tools** · new / kept | Run from a clone with uvicorn; Docker | A pip package with an `intent-sql` CLI (`ask`, `schema`, `benchmark`, `keys`, `custom`); Docker kept |
+| **Engineering** · improved | Unit tests and CI (tests, JS check) | 152 offline tests, ruff, mypy, clean-install and Docker CI jobs, secret scanning, dependency audit, a cumulative spending guard |
+| **Writing data** · removed | INSERT/UPDATE/DELETE with preview, confirmation and undo | Deliberately left out of 1.0: IntentSQL only reads |
 
 ## Install and run
 
@@ -109,16 +130,23 @@ What the numbers mean:
 - The hardest questions remain the weakest area: extra-hard Spider questions score 62–65%.
 - The Spider test score uses IntentSQL's own execution matcher on a random sample. It is not an official leaderboard result.
 
-**Since the Alpha.** `v0.1.0-alpha.1` scored 33.8% on 80 Spider train questions, and 0% on hard and extra-hard. The same 80 questions reached 77.5% early in the rewrite. 1.0 also adds:
-- multi-hop joins, subqueries, set operations and arithmetic;
-- verification and calibrated confidence;
-- read-only safety;
-- a rebuilt interface that keeps the Alpha's look.
+### From the Alpha to 1.0, in numbers
 
-[CHANGELOG.md](CHANGELOG.md) has the details.
+Spider execution accuracy, all with TypeSafe Jev:
+
+| | Questions | Accuracy |
+|---|---|---|
+| Alpha `v0.1.0-alpha.1` | 80 Spider train questions (seed 11) | **33.8%**; 0% on hard and extra-hard |
+| Early rewrite (2026-10-09) | the same 80 questions | **77.5%** |
+| 1.0 | 600 Spider train questions (seeds 21, 31) | **76.8%** |
+| 1.0 | 600 Spider dev questions (fresh sample) | **71.3%** |
+| 1.0 | 600 Spider test questions (public labels) | **78.0%** |
+
+Only the first two rows use the same questions. Even that comparison flatters the rewrite: those train questions were development data, inspected while it was built. The 1.0 rows are different samples from different splits, so read the table as a clear trend, not a controlled head-to-head. The Alpha could not express multi-hop joins, subqueries, set operations or arithmetic at all, which is where most of the gap on hard questions comes from. Every run, with seeds and caveats, is in [docs/EVALUATION.md](docs/EVALUATION.md#compared-with-the-alpha).
 
 ## Limitations
 
+- Read-only by design: no inserts, updates or deletes in 1.0.
 - SQLite only, one question at a time, and no follow-up questions about a previous answer.
 - Accuracy depends on the model. Only TypeSafe Jev is measured and calibrated. Liquid d1 and custom models show the raw verification score until they are measured.
 - Ambiguous wording can produce a confident wrong answer. Alternatives are offered when readings disagree, and they are worth reading.
