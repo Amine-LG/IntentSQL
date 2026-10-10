@@ -4,13 +4,12 @@ These readings need set operations or filtered subqueries; a row-level filter
 returns plausible but wrong rows (the regression each test guards against).
 """
 
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from intentsql.pipeline import ANSWERED, answer
-from tests.fakes import ScriptedJev
+from tests.fakes import ScriptedJev, sqlite
 
 DDL = """
 CREATE TABLE film (id INTEGER PRIMARY KEY, title TEXT, studio TEXT, director TEXT, minutes INTEGER);
@@ -43,7 +42,7 @@ class QuantifierTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db = Path(cls.tmp.name) / "q.sqlite"
-        with sqlite3.connect(cls.db) as conn:
+        with sqlite(cls.db) as conn:
             conn.executescript(DDL)
 
     @classmethod
@@ -145,7 +144,7 @@ class FlagTest(unittest.TestCase):
             ("^out_", "show the supplier name in", "itself"),
             ("^cat_products.discontinued$", "", "not discontinued")]))
         self.assertEqual(result.status, ANSWERED, result.message)
-        with sqlite3.connect(self.DB) as conn:
+        with sqlite(self.DB) as conn:
             gold = conn.execute("SELECT name FROM suppliers WHERE id NOT IN "
                                 "(SELECT supplier_id FROM products WHERE discontinued = 1)").fetchall()
         self.assertEqual(rows(result), sorted(gold))

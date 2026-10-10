@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +5,7 @@ from pathlib import Path
 from intentsql import ir
 from intentsql.compiler import CompileError, compile_query
 from intentsql.schema import load_schema
+from tests.fakes import sqlite
 
 DDL = """
 CREATE TABLE dept(id INTEGER PRIMARY KEY, name TEXT, "group" TEXT);
@@ -22,7 +22,7 @@ class CompilerTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db = Path(cls.tmp.name) / "c.sqlite"
-        with sqlite3.connect(cls.db) as conn:
+        with sqlite(cls.db) as conn:
             conn.executescript(DDL)
         cls.schema = load_schema(cls.db)
 
@@ -32,7 +32,7 @@ class CompilerTest(unittest.TestCase):
 
     def run_query(self, query):
         compiled = compile_query(query, self.schema)
-        with sqlite3.connect(self.db) as conn:
+        with sqlite(self.db) as conn:
             return compiled, conn.execute(compiled.sql, compiled.params).fetchall()
 
     def emp(self, **kw):
@@ -191,7 +191,7 @@ class SchemaTest(unittest.TestCase):
     def test_introspection_types_keys_and_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "s.sqlite"
-            with sqlite3.connect(db) as conn:
+            with sqlite(db) as conn:
                 conn.executescript("""
                     CREATE TABLE a(a_id INTEGER PRIMARY KEY, label TEXT, born DATE);
                     CREATE TABLE b(b_id INTEGER PRIMARY KEY, title TEXT, score TEXT);

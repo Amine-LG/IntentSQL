@@ -1,13 +1,12 @@
 """Schema inference: subtypes, fallback joins, row identity."""
 
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from intentsql.pipeline import ANSWERED, answer
 from intentsql.schema import load_schema
-from tests.fakes import ScriptedJev
+from tests.fakes import ScriptedJev, sqlite
 
 DDL = """
 CREATE TABLE people (people_id INTEGER PRIMARY KEY, name TEXT, hometown TEXT);
@@ -28,7 +27,7 @@ class SchemaTest(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db = Path(cls.tmp.name) / "s.sqlite"
-        with sqlite3.connect(cls.db) as conn:
+        with sqlite(cls.db) as conn:
             conn.executescript(DDL)
         cls.schema = load_schema(cls.db)
 

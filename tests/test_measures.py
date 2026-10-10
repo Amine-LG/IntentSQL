@@ -1,6 +1,5 @@
 """Derived measures (arithmetic over stored columns) and column-to-column comparisons."""
 
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +7,7 @@ from pathlib import Path
 from intentsql.grounding import ground
 from intentsql.pipeline import ANSWERED, answer
 from intentsql.schema import load_schema
-from tests.fakes import ScriptedJev, make_shop
+from tests.fakes import ScriptedJev, make_shop, sqlite
 
 DDL = """
 CREATE TABLE candidate (id INTEGER PRIMARY KEY, name TEXT, support_rate REAL, oppose_rate REAL);
@@ -29,7 +28,7 @@ class MeasureTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.shop = make_shop(cls.tmp.name)
         cls.db = Path(cls.tmp.name) / "m.sqlite"
-        with sqlite3.connect(cls.db) as conn:
+        with sqlite(cls.db) as conn:
             conn.executescript(DDL)
 
     @classmethod
@@ -90,7 +89,7 @@ class MeasureTest(unittest.TestCase):
     def test_ordering_by_elapsed_time_uses_the_exact_value(self):
         # Hires days apart round to the same number of years; the order must still follow the dates.
         db = Path(self.tmp.name) / "staff.sqlite"
-        with sqlite3.connect(db) as conn:
+        with sqlite(db) as conn:
             conn.executescript("CREATE TABLE staff (id INTEGER PRIMARY KEY, name TEXT, hire_date DATE);"
                                "INSERT INTO staff VALUES (1,'Ann','2020-01-20'),(2,'Bob','2020-01-02'),"
                                "(3,'Cy','2018-06-01'),(4,'Di','2020-01-10');")
@@ -106,7 +105,7 @@ class MeasureTest(unittest.TestCase):
         result = self.ask(db, "How much budget does each department have left after paying salaries?", [
             ("^out_", "show the department name in", "itself"),
             ("^out_", "budget left after the total", "budget left")])
-        with sqlite3.connect(db) as conn:
+        with sqlite(db) as conn:
             gold = conn.execute("SELECT T2.name, T2.budget - SUM(T1.salary) FROM employees T1 JOIN departments T2 "
                                 "ON T1.department_id = T2.id GROUP BY T2.id").fetchall()
         as_sets = lambda rows: sorted(tuple(sorted(map(str, r))) for r in rows)  # noqa: E731 (column order free)

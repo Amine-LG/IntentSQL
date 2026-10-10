@@ -1,6 +1,5 @@
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +7,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from tests.fakes import ScriptedJev, make_shop
+from tests.fakes import ScriptedJev, make_shop, sqlite
 
 
 class WebTest(unittest.TestCase):
@@ -70,7 +69,7 @@ class WebTest(unittest.TestCase):
                 self.assertEqual(refused.status_code, 400)
                 if sql.startswith(("DELETE", "UPDATE", "DROP")):
                     self.assertIn("Read-only", refused.json()["detail"])
-        with sqlite3.connect(self.tmp.name + "/databases/" + name) as conn:
+        with sqlite(self.tmp.name + "/databases/" + name) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 5)
 
     def test_cross_origin_writes_rejected(self):

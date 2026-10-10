@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from intentsql.mock import MockClient
@@ -30,9 +32,21 @@ INSERT INTO employees VALUES (1,'Zoe','sales',5000,NULL),(2,'Yan','sales',4000,1
 """
 
 
+@contextmanager
+def sqlite(path: str | Path) -> Iterator[sqlite3.Connection]:
+    """A connection that commits like `with sqlite3.connect(...)` and is then closed.
+    (`with sqlite3.connect()` only commits; Windows cannot delete a file left open.)"""
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def make_shop(directory: str | Path) -> Path:
     path = Path(directory) / "shop.sqlite"
-    with sqlite3.connect(path) as conn:
+    with sqlite(path) as conn:
         conn.executescript(SHOP_DDL)
     return path
 

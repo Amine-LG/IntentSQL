@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +13,7 @@ from intentsql.benchmark.exec_match import (
 )
 from intentsql.benchmark.runner import ANSWERED, REFUSED, Prediction, evaluate_case, summarize
 from intentsql.benchmark.spider import Example, construct_tags, hardness, primary_category, stratified_sample
+from tests.fakes import sqlite
 
 
 class ResultEquivalenceTest(unittest.TestCase):
@@ -84,7 +84,7 @@ class RunnerTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "t.sqlite"
-        with sqlite3.connect(self.db) as conn:
+        with sqlite(self.db) as conn:
             conn.executescript("CREATE TABLE t(a INTEGER, b TEXT);"
                                "INSERT INTO t VALUES (1,'x'),(2,'y'),(3,'y');")
 

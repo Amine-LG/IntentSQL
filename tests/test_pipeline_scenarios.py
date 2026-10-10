@@ -6,12 +6,11 @@ generation, assembly, join planning, subquery shapes, compilation) are tested
 offline exactly as they run in production.
 """
 
-import sqlite3
 import tempfile
 import unittest
 
 from intentsql.pipeline import AMBIGUOUS, ANSWERED, REFUSED, answer
-from tests.fakes import ScriptedJev, make_shop
+from tests.fakes import ScriptedJev, make_shop, sqlite
 
 SHOW = "itself"          # output form option: "the X itself (one value per result row)"
 
@@ -168,7 +167,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(result.status, REFUSED)
 
     def test_missing_values(self):
-        with sqlite3.connect(self.db) as conn:
+        with sqlite(self.db) as conn:
             conn.execute("INSERT INTO customers VALUES (6, 'Fay', NULL, 'N')")
         try:
             from intentsql.schema import _CACHE
@@ -179,7 +178,7 @@ class ScenarioTest(unittest.TestCase):
             self.assertEqual(rows(result), [("Fay",)])
             self.assertIn("IS NULL", result.sql)
         finally:
-            with sqlite3.connect(self.db) as conn:
+            with sqlite(self.db) as conn:
                 conn.execute("DELETE FROM customers WHERE id = 6")
             _CACHE.clear()
 

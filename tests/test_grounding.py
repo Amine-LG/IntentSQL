@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +6,7 @@ from intentsql.grounding import extract_literals, ground
 from intentsql.intent import column_phrase, entity
 from intentsql.schema import load_schema
 from intentsql.text import humanize, lemma, stem, tokenize
-from tests.fakes import make_shop
+from tests.fakes import make_shop, sqlite
 
 
 class TextTest(unittest.TestCase):
@@ -76,7 +75,7 @@ class LiteralTest(unittest.TestCase):
         self.assertEqual(g.table_link["employees"], 1.0)        # "employee's" names the table
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "p.sqlite"
-            with sqlite3.connect(path) as conn:
+            with sqlite(path) as conn:
                 conn.executescript("CREATE TABLE shop (id INTEGER PRIMARY KEY, name TEXT);"
                                    "INSERT INTO shop VALUES (1, 'McDonald''s'), (2, 'Wendy');")
             found = extract_literals("Where is McDonald's located?", load_schema(path))
@@ -85,7 +84,7 @@ class LiteralTest(unittest.TestCase):
     def test_full_name_split_across_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "n.sqlite"
-            with sqlite3.connect(path) as conn:
+            with sqlite(path) as conn:
                 conn.executescript("CREATE TABLE student (id INTEGER PRIMARY KEY, fname TEXT, lname TEXT);"
                                    "INSERT INTO student VALUES (1, 'Linda', 'Smith'), (2, 'Tom', 'Linda');")
             schema = load_schema(path)
