@@ -109,6 +109,7 @@ function renderModelChip(conn) {
   if (!active) {
     dot.className = "state-dot idle"; $("#model-name").replaceChildren("Choose", el("span", { class: "hide-narrow", text: " a model" })); $("#model-state").textContent = "";
     $("#side-dot").className = "state-dot idle"; side.textContent = "No model selected";
+    $("#model-chip").setAttribute("aria-label", "Decision model: none selected. Choose a model");
     return;
   }
   $("#side-dot").className = `state-dot ${STATE_TONE[active.state] || "idle"}`;
@@ -119,6 +120,7 @@ function renderModelChip(conn) {
     : [active.model_label, el("span", { class: "hide-narrow", text: ` · ${active.label}` })]));
   $("#model-state").textContent = active.name === "demo" ? "" : active.state_text;
   $("#model-chip").title = `${active.label} ${active.model_label}: ${active.state_text}${active.message ? ` — ${active.message}` : ""}`;
+  $("#model-chip").setAttribute("aria-label", `Decision model: ${active.name === "demo" ? "demo mode" : `${active.custom ? active.label : `${active.model_label} by ${active.label}`}, ${active.state_text}`}. Change model`);
 }
 
 function openModelDialog() {
@@ -398,10 +400,10 @@ function renderSchema() {
   const rows = state.schema.tables.reduce((n, t) => n + t.rows, 0);
   $("#schema-summary").textContent = `${plural(state.schema.tables.length, "table")} · ${plural(rows, "row")}`;
   $("#schema-list").replaceChildren(...tables.map((t) => el("details", { open: Boolean(filter) || tables.length <= 2 },
-    el("summary", {}, el("span", { text: t.name }), el("span", { class: "rows", text: t.rows.toLocaleString() })),
+    el("summary", { title: `${t.name} · ${plural(t.rows, "row")}` }, el("span", { text: t.name }), el("span", { class: "rows", text: t.rows.toLocaleString() })),
     el("ul", {}, t.columns.map((c) => {
       const target = refs.get(`${t.name}.${c.name}`);
-      return el("li", {},
+      return el("li", { title: c.name },
         el("span", {}, c.name,
           c.primary_key ? el("span", { class: "tag", text: "KEY", title: "Primary key" }) : null,
           target ? el("span", { class: "tag", text: "→", title: `References ${target}` }) : null),
@@ -459,8 +461,10 @@ document.addEventListener("keydown", (event) => {
 });
 
 const PHASES = ["ground", "interpret", "compile", "verify", "execute"];
+const PHASE_STATUS = { ground: "Reading your question and the schema…", interpret: "Asking the decision model…",
+  compile: "Building the typed plan and the SQL…", verify: "Checking the readings…", execute: "Running the read-only query…" };
 function setProgress(done, timings = {}, failed = false) {
-  $("#journey").hidden = false;
+  $("#journey").classList.remove("idle");
   $$("#progress li").forEach((li) => {
     const phase = li.dataset.phase;
     const index = PHASES.indexOf(phase);
@@ -528,11 +532,13 @@ async function ask() {
   try {
     const result = await streamAnswer({ database: state.database, question: text }, (event) => {
       done.push(event.phase); timings[event.phase] = event.ms; setProgress(done, timings);
+      const next = PHASES[PHASES.indexOf(event.phase) + 1];
+      if (next) runStatus(PHASE_STATUS[next], "running");
     });
     remember(text, result.status);
     const failed = ["error", "refused"].includes(result.status);
     setProgress(failed ? done : PHASES, timings, failed);
-    renderStats(result);
+    if (result.usage?.calls || !failed) renderStats(result); else $("#stats").replaceChildren();   // nothing ran: no numbers
     runStatus({ answered: "Query complete · exact SQLite result ready", ambiguous: "Answered, but uncertain · compare the readings below",
       refused: "Not answered · see why below", error: "Stopped · see the error below" }[result.status] || "Done",
       failed ? "bad" : "ok");
@@ -563,6 +569,12 @@ function readings(result) {
   return [main, ...(result.alternatives || [])];
 }
 
+// Matches the CSS container query: the answer and the decisions sit side by side.
+function sideBySide() {
+  const main = $("main"); const css = getComputedStyle(main);
+  return main.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight) >= 1180;
+}
+
 function showAnswer(result) {
   state.result = result; state.sort = null;
   state.readings = readings(result);
@@ -587,9 +599,11 @@ function showAnswer(result) {
   notice.hidden = !message;
   notice.className = "notice" + (result.status === "ambiguous" ? " warn" : ["refused", "error"].includes(result.status) ? " bad" : "");
   notice.textContent = message;
-  state.stage = state.stage || null;
+  // Beside the answer (wide screens) the decisions are open from the start; stacked, they wait for a click.
+  if (!state.stage && sideBySide()) state.stage = "decided";
   renderInspector();
-  $("#answer").scrollIntoView({ behavior: "smooth", block: "start" });
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $("#answer").scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
 }
 
 function renderReading() {
@@ -733,7 +747,8 @@ function stagesOf(result) {
 function renderInspector() {
   const result = state.result;
   const section = $("#inspector");
-  section.hidden = !result || (!result.decisions && !result.grounding);
+  section.hidden = !result || (!result.decisions && !result.grounding)
+    || (result.status === "error" && !(result.decisions || []).length);     // a failure before any decision
   if (section.hidden) return;
   const u = result.usage || {};
   const t = result.timings_ms || {};
@@ -743,7 +758,7 @@ function renderInspector() {
     result.provider === "demo" ? "no model called (demo mode)" : u.calls ? `${plural(u.calls, "model call")}${by ? ` to ${by}` : ""}` : ""].filter(Boolean).join(" · ");
   const stages = stagesOf(result);
   $("#stages").replaceChildren(...stages.map((stage, i) => el("li", {},
-    el("button", { type: "button", role: "tab", "aria-selected": String(state.stage === stage.id), class: "stage",
+    el("button", { type: "button", role: "tab", "aria-selected": String(state.stage === stage.id), class: "stage", title: `${stage.title}: ${stage.metric}`,
       onclick: () => { state.stage = state.stage === stage.id ? null : stage.id; renderInspector(); } },
     el("span", { class: "stage-n", text: String(i + 1) }),
     el("span", { class: "stage-title", text: stage.title }),

@@ -406,6 +406,9 @@ def _run_console(path: Path, sql: str, params: tuple[Any, ...] = ()) -> dict[str
         return _safe({"columns": columns, "rows": [list(r) for r in rows[:CONSOLE_MAX_ROWS]],
                       "truncated": len(rows) > CONSOLE_MAX_ROWS})
     except sqlite3.Error as exc:
+        if "not authorized" in str(exc) or "readonly" in str(exc):
+            raise HTTPException(400, "Read-only: IntentSQL never adds, changes or deletes data. "
+                                     "Use SELECT, WITH or EXPLAIN.") from exc
         raise HTTPException(400, f"SQLite: {exc}") from exc
     finally:
         timer.cancel()

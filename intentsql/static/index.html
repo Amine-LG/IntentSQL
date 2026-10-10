@@ -28,8 +28,8 @@
     <select id="database" aria-label="Database"></select>
   </label>
   <div class="top-actions">
-    <button id="open-import" class="button ghost" type="button">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14"/></svg><span class="hide-narrow">Open database</span>
+    <button id="open-import" class="button ghost" type="button" title="Open a SQLite database">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14"/></svg><span class="hide-mid">Open database</span>
     </button>
     <button id="open-console" class="button ghost hide-narrow" type="button">SQL console</button>
     <button id="model-chip" class="model-chip" type="button" aria-haspopup="dialog" aria-label="Model settings">
@@ -69,100 +69,111 @@
   </aside>
 
   <main id="main">
-    <section class="intro" aria-labelledby="intro-title">
-      <div class="eyebrow"><span class="accent-line"></span> Language in. Clarity out.</div>
-      <h1 id="intro-title">The query, <span>made clear.</span></h1>
-      <p>Ask in your own words. See every decision behind the SQL.</p>
-    </section>
+    <div class="workspace">
+      <div class="hero">
+        <div class="hero-main">
+          <section class="intro" aria-labelledby="intro-title">
+            <div class="eyebrow"><span class="accent-line"></span> Language in. Clarity out.</div>
+            <h1 id="intro-title">The query, <span>made clear.</span></h1>
+            <p>Ask in your own words. See every decision behind the SQL.</p>
+          </section>
 
-    <section id="welcome" class="card welcome" hidden aria-labelledby="welcome-title">
-      <h2 id="welcome-title">Choose a model to get started</h2>
-      <p>IntentSQL asks a small <em>decision model</em> to choose between readings of your question that it builds from your database, then writes and checks the SQL itself. Connect a model, or look around in demo mode first.</p>
-      <div class="welcome-actions">
-        <button id="welcome-setup" class="button primary" type="button">Set up a model</button>
-        <button id="welcome-demo" class="button" type="button">Try demo mode</button>
-      </div>
-    </section>
+          <section id="welcome" class="card welcome" hidden aria-labelledby="welcome-title">
+            <h2 id="welcome-title">Choose a model to get started</h2>
+            <p>IntentSQL asks a small <em>decision model</em> to choose between readings of your question that it builds from your database, then writes and checks the SQL itself. Connect a model, or look around in demo mode first.</p>
+            <div class="welcome-actions">
+              <button id="welcome-setup" class="button primary" type="button">Set up a model</button>
+              <button id="welcome-demo" class="button" type="button">Try demo mode</button>
+            </div>
+          </section>
 
-    <form id="ask-form" class="ask card" autocomplete="off">
-      <label for="question" class="ask-label">Ask the database <strong id="db-name">this database</strong></label>
-      <div class="ask-row">
-        <textarea id="question" rows="1" maxlength="2000" placeholder="e.g. Which customers have never placed an order?" required></textarea>
-        <button id="ask" class="button primary" type="submit">Explore query <span aria-hidden="true">&nearr;</span></button>
+          <form id="ask-form" class="ask card" autocomplete="off">
+            <label for="question" class="ask-label">Ask the database <strong id="db-name">this database</strong></label>
+            <div class="ask-row">
+              <textarea id="question" rows="1" maxlength="2000" placeholder="e.g. Which customers have never placed an order?" required></textarea>
+              <button id="ask" class="button primary" type="submit">Explore query <span aria-hidden="true">&nearr;</span></button>
+            </div>
+            <div class="ask-foot">
+              <p class="hint small"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> to focus</p>
+              <p class="readonly-note small"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span><strong>Read-only.</strong> IntentSQL only reads data. It never adds, changes or deletes records, and it works on a copy of your database.</span></p>
+            </div>
+          </form>
+        </div>
+        <aside class="samples" aria-label="Example questions">
+          <span class="tiny-label">Explore the possibilities</span>
+          <div id="examples" class="examples"></div>
+        </aside>
       </div>
-      <p class="hint small"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> to focus</p>
-    </form>
-    <div class="samples">
-      <span class="tiny-label">Explore the possibilities</span>
-      <div id="examples" class="examples" aria-label="Example questions"></div>
+
+      <section id="journey" class="journey idle" aria-label="How an answer is built">
+        <ol id="progress" class="pipeline" aria-label="Stages">
+          <li data-phase="ground"><span class="n">01</span><span class="step"><strong>Inspect</strong><small>Question and schema</small></span></li>
+          <li data-phase="interpret"><span class="n">02</span><span class="step"><strong>Resolve</strong><small>Bounded decisions</small></span></li>
+          <li data-phase="compile"><span class="n">03</span><span class="step"><strong>Compile</strong><small>Typed plan to SQL</small></span></li>
+          <li data-phase="verify"><span class="n">04</span><span class="step"><strong>Verify</strong><small>Readings checked</small></span></li>
+          <li data-phase="execute"><span class="n">05</span><span class="step"><strong>Execute</strong><small>Read-only result</small></span></li>
+        </ol>
+        <div id="stats" class="stats" aria-label="Usage for this answer"></div>
+        <p id="run-status" class="run-status" role="status"><span class="pulse"></span><span id="run-status-text">Ready when you are. Ask a question, or pick an example.</span></p>
+      </section>
+
+      <div class="run-grid">
+        <article id="answer" class="card answer" hidden aria-live="polite" aria-labelledby="answer-title">
+          <header class="answer-head">
+            <p class="eyebrow">You asked</p>
+            <h2 id="answer-title" class="asked"></h2>
+          </header>
+
+          <section class="understood">
+            <div class="understood-head">
+              <p class="eyebrow">IntentSQL understood</p>
+              <span id="confidence" class="pill"></span>
+            </div>
+            <p id="explanation" class="explanation"></p>
+            <div id="notice" class="notice" hidden></div>
+            <div id="alternatives" class="alternatives" hidden>
+              <p class="eyebrow">Possible readings of the question</p>
+              <ul id="alternative-list"></ul>
+            </div>
+          </section>
+
+          <section id="result-section" class="result-section">
+            <div class="section-head result-head">
+              <div><p class="eyebrow">The answer</p><h3 class="section-title">Results</h3></div>
+              <div class="section-actions">
+                <button id="copy-result" class="button ghost small" type="button">Copy</button>
+                <button id="export" class="button ghost small" type="button">Export CSV &darr;</button>
+              </div>
+              <div class="row-count"><strong id="row-count-n">&mdash;</strong><span id="row-count">rows</span></div>
+            </div>
+            <div id="result" class="result"></div>
+          </section>
+
+          <section id="sql-section" class="sql-section">
+            <div class="section-head">
+              <p class="eyebrow sql-label"><span class="dot"></span> Readable SQL <b>display</b></p>
+              <div class="section-actions">
+                <button id="copy-sql" class="button ghost small" type="button">Copy</button>
+                <button id="edit-sql" class="button ghost small" type="button">Open in console</button>
+              </div>
+            </div>
+            <pre id="sql" class="sql"><code></code></pre>
+          </section>
+
+        </article>
+        <section id="inspector" class="card inspector" hidden aria-labelledby="inspector-title">
+          <div class="inspector-head">
+            <div><p class="eyebrow">Semantic decisions</p><h3 id="inspector-title" class="section-title">How IntentSQL decided</h3></div>
+            <div class="inspector-tools">
+              <span id="inspector-meta" class="muted small"></span>
+              <label class="dev-toggle"><input id="developer" type="checkbox"> Developer view</label>
+            </div>
+          </div>
+          <ol id="stages" class="stages" role="tablist" aria-label="Stages of the answer"></ol>
+          <div id="stage-panel" class="stage-panel" role="tabpanel" hidden></div>
+        </section>
+      </div>
     </div>
-
-    <section id="journey" class="journey" hidden aria-label="How the answer is being built">
-      <ol id="progress" class="pipeline" aria-label="Stages">
-        <li data-phase="ground"><span class="n">01</span><strong>Inspect</strong></li>
-        <li data-phase="interpret"><span class="n">02</span><strong>Resolve</strong></li>
-        <li data-phase="compile"><span class="n">03</span><strong>Compile</strong></li>
-        <li data-phase="verify"><span class="n">04</span><strong>Verify</strong></li>
-        <li data-phase="execute"><span class="n">05</span><strong>Execute</strong></li>
-      </ol>
-      <div id="stats" class="stats" aria-label="Usage for this answer"></div>
-      <p id="run-status" class="run-status" role="status"><span class="pulse"></span><span id="run-status-text"></span></p>
-    </section>
-
-    <article id="answer" class="card answer" hidden aria-live="polite" aria-labelledby="answer-title">
-      <header class="answer-head">
-        <p class="eyebrow">You asked</p>
-        <h2 id="answer-title" class="asked"></h2>
-      </header>
-
-      <section class="understood">
-        <div class="understood-head">
-          <p class="eyebrow">IntentSQL understood</p>
-          <span id="confidence" class="pill"></span>
-        </div>
-        <p id="explanation" class="explanation"></p>
-        <div id="notice" class="notice" hidden></div>
-        <div id="alternatives" class="alternatives" hidden>
-          <p class="eyebrow">Possible readings of the question</p>
-          <ul id="alternative-list"></ul>
-        </div>
-      </section>
-
-      <section id="result-section" class="result-section">
-        <div class="section-head result-head">
-          <div><p class="eyebrow">The answer</p><h3 class="section-title">Results</h3></div>
-          <div class="section-actions">
-            <button id="copy-result" class="button ghost small" type="button">Copy</button>
-            <button id="export" class="button ghost small" type="button">Export CSV &darr;</button>
-          </div>
-          <div class="row-count"><strong id="row-count-n">&mdash;</strong><span id="row-count">rows</span></div>
-        </div>
-        <div id="result" class="result"></div>
-      </section>
-
-      <section id="sql-section" class="sql-section">
-        <div class="section-head">
-          <p class="eyebrow sql-label"><span class="dot"></span> Readable SQL <b>display</b></p>
-          <div class="section-actions">
-            <button id="copy-sql" class="button ghost small" type="button">Copy</button>
-            <button id="edit-sql" class="button ghost small" type="button">Open in console</button>
-          </div>
-        </div>
-        <pre id="sql" class="sql"><code></code></pre>
-      </section>
-
-      <section id="inspector" class="inspector" aria-labelledby="inspector-title">
-        <div class="inspector-head">
-          <div><p class="eyebrow">Semantic decisions</p><h3 id="inspector-title" class="section-title">How IntentSQL decided</h3></div>
-          <div class="inspector-tools">
-            <span id="inspector-meta" class="muted small"></span>
-            <label class="dev-toggle"><input id="developer" type="checkbox"> Developer view</label>
-          </div>
-        </div>
-        <ol id="stages" class="stages" role="tablist" aria-label="Stages of the answer"></ol>
-        <div id="stage-panel" class="stage-panel" role="tabpanel" hidden></div>
-      </section>
-    </article>
   </main>
 </div>
 

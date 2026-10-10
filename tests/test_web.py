@@ -66,7 +66,10 @@ class WebTest(unittest.TestCase):
         for sql in ("DELETE FROM orders", "DROP TABLE orders", "UPDATE orders SET total = 0",
                     "ATTACH DATABASE 'x.db' AS x", "PRAGMA writable_schema = 1"):
             with self.subTest(sql=sql):
-                self.assertEqual(self.client.post("/api/sql", json={"database": name, "sql": sql}).status_code, 400)
+                refused = self.client.post("/api/sql", json={"database": name, "sql": sql})
+                self.assertEqual(refused.status_code, 400)
+                if sql.startswith(("DELETE", "UPDATE", "DROP")):
+                    self.assertIn("Read-only", refused.json()["detail"])
         with sqlite3.connect(self.tmp.name + "/databases/" + name) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 5)
 
