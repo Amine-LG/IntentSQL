@@ -31,3 +31,8 @@ spider_data.zip
 intentsql*report*.json
 intentsql*report*.txt
 connection.json
+
+# build artifacts
+build/
+dist/
+*.egg-info/
