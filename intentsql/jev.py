@@ -312,7 +312,7 @@ class JevClient:
                     delay = 0.5 * 2 ** (attempt - 1)
                 time.sleep(delay)
                 continue
-            raise JevError(self._error(response.status_code))
+            raise JevError(self._error(response.status_code) + _detail(response, self._api_key))
 
     # -- public ------------------------------------------------------------------
     def ask(self, state: Any, questions: Mapping[str, Question], *, usage: Usage,
@@ -372,6 +372,21 @@ class JevClient:
                 if log is not None:
                     log.append(exchange)
         return merged
+
+
+def _detail(response: httpx.Response, key: str | None) -> str:
+    """The provider's own short error message ('API key expired'), never echoing the key."""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    error = data.get("error") if isinstance(data, dict) else None
+    message = error.get("message") if isinstance(error, dict) else error
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    if key:
+        message = message.replace(key, "***")
+    return f" (provider says: {message.strip()[:160]})"
 
 
 def _number(value: Any) -> float | None:
