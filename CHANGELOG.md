@@ -35,6 +35,11 @@ A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`).
 - **Read-only.** Requests to change data are refused (the Alpha's write path is gone).
 - **CLI.** `intent-sql ask | schema | benchmark | serve`.
 
+### Providers
+- OpenRouter (`typesafe/jev-1.13`, default), TypeSafe direct, OpenJEV and an offline mock, selected explicitly or by `auto`; no run-time fallback.
+- Provenance (provider, model snapshot, request id, cost) on every exchange; spending limit; per-provider calibration.
+- `intent-sql keys`, `intent-sql provider --balance --ping`.
+
 ### Evaluation
 - **Spider pipeline.**
   - Uses train, dev and test splits with recorded seeds, random batches and the hardness breakdown.

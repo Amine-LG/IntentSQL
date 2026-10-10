@@ -16,15 +16,24 @@ It is built on **Jev**, TypeSafe's decision model ([what that is](https://docs.t
 
 ## Quick start
 
-You need Python 3.10 or newer and a Jev API key. To get a key, sign in to the [TypeSafe console](https://console.typesafe.ai/) and see the [quick start](https://docs.typesafe.ai/introduction/quickstart).
+You need Python 3.10 or newer and a key for one Jev provider:
+
+| Provider | Model | Key variable | Notes |
+|---|---|---|---|
+| **OpenRouter** (default) | `typesafe/jev-1.13` | `OPENROUTER_API_KEY` | TypeSafe's Jev through OpenRouter's Decisions API; reports a cost per request |
+| TypeSafe direct | `jev-latest` | `SYSTEM_ONE_API_KEY` | [TypeSafe console](https://console.typesafe.ai/) |
+| OpenJEV | `openjev` | `OPENJEV_API_KEY` | independent public access to Jev |
+| Offline mock | — | — | no network; fixed default decisions, for trying the software only |
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/intent-sql serve            # http://127.0.0.1:7862
+.venv/bin/pip install .
+.venv/bin/intent-sql keys --provider openrouter   # hidden input; saved owner-only in ~/.config/intentsql
+.venv/bin/intent-sql provider --balance --ping    # check the account and send one tiny decision
+.venv/bin/intent-sql serve                        # http://127.0.0.1:7862
 ```
 
-Open <http://127.0.0.1:7862>, click the gear icon and paste your key. The key is saved in your local IntentSQL workspace (`~/.local/share/intentsql`, or `%LOCALAPPDATA%\IntentSQL` on Windows) with owner-only permissions, and it is never sent back to the page. As an alternative, set `SYSTEM_ONE_API_KEY` in your environment or in a `.env` file (which git ignores).
+The provider and its key can also be set in the app (gear icon), or with environment variables (`INTENTSQL_PROVIDER=openrouter|typesafe|openjev|mock|auto`, plus the key variable). With `auto` the first provider that has a key is used, in the order OpenRouter, TypeSafe, OpenJEV. IntentSQL never switches providers on its own: when a provider fails, the error names it. Keys are stored with owner-only permissions, sent only to their own provider, and never returned to the page, logged or written to reports. `INTENTSQL_BUDGET_USD` stops requests once the spend reported by the provider reaches a limit.
 
 The app opens with three example databases: Cyberchase, DESE and Moneyball. Use **Open database** to work on your own SQLite file. IntentSQL copies the file into its workspace and only ever reads the copy.
 
@@ -40,7 +49,7 @@ intent-sql schema moneyball.db          # bundled examples by name, or any path 
 
 ```bash
 docker build -t intentsql .
-docker run --rm -p 127.0.0.1:7862:7862 -v intentsql-data:/data -e SYSTEM_ONE_API_KEY intentsql
+docker run --rm -p 127.0.0.1:7862:7862 -v intentsql-data:/data -e INTENTSQL_PROVIDER=openrouter -e OPENROUTER_API_KEY intentsql
 ```
 
 ## What it supports
@@ -61,7 +70,7 @@ IntentSQL reads data and never changes it. Requests to modify data are refused, 
 
 ## How good is it?
 
-These numbers were measured on 2026-10-10 with `jev-latest`. They are execution accuracy: the result rows must match the reference query's rows.
+These numbers were measured on 2026-10-10 with **TypeSafe direct, `jev-latest`**. They have not yet been re-measured through OpenRouter or OpenJEV, and results from different providers are reported separately. They are execution accuracy: the result rows must match the reference query's rows.
 
 | Evaluation | Result |
 |---|---|
@@ -74,7 +83,7 @@ These numbers were measured on 2026-10-10 with `jev-latest`. They are execution 
 | Cost per question | 2.0 Jev calls, about 8,200 input tokens; latency p50 0.58 s, p95 0.81 s |
 | For comparison: the Alpha this replaced | 33.8% on a random Spider train sample, 0% on hard and extra-hard |
 
-**Not yet measured.** The frozen held-out suite (`holdout.json`, on a schema never used during development) and the Spider test milestone could not be run: the TypeSafe account ran out of API credits during the final assessment. [docs/EVALUATION.md](docs/EVALUATION.md) gives the exact commands.
+**Not yet measured.** The frozen held-out suite (`holdout.json`, on a schema never used during development) and the Spider test milestone have not been run. The TypeSafe account ran out of credits during the final assessment (HTTP 402), and the OpenRouter and OpenJEV keys tried on 2026-10-10 were rejected (expired / invalid). `scripts/release_eval.sh <provider>` runs the whole protocol for one provider; [docs/EVALUATION.md](docs/EVALUATION.md) describes it.
 
 What the numbers mean:
 - About one answer in eight that IntentSQL presents as confident is wrong on Spider. Always read the "IntentSQL understood" line.

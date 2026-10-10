@@ -61,3 +61,13 @@ Every run writes a JSON report containing:
 - the summary statistics.
 
 The reports live outside the repository, in `../IntentSQL-artifacts/v1-runs/`.
+
+## Providers (added 2026-10-10)
+
+The same Jev model can be reached through several providers (TypeSafe direct, OpenRouter, OpenJEV). They are **not** assumed to be identical:
+
+- **One provider per run.** Every evaluation runs against a single provider. Its report records the provider, the model snapshot that answered each request, and the code revision.
+- **No fallback mid-run.** If a provider fails fatally (expired key, no credits, spending limit, an outage that outlasts the retries), the run stops with `INTERRUPTED` and writes no report. A partial run is never completed with another provider.
+- **Separate results.** Results are reported per provider, for example "Spider dev, OpenRouter typesafe/jev-1.13: …".
+- **Calibration is per provider.** The current table was measured with TypeSafe direct `jev-latest` on train. A provider without its own table reports the raw verification score and uses the raw "uncertain" threshold. Before any of its confident-answer figures are compared, a table is fitted on train runs for that provider.
+- **Spending.** `scripts/release_eval.sh <provider>` runs the protocol steps in order under `INTENTSQL_BUDGET_USD`, which defaults to $3. At the listed $0.042 per million input tokens, the full plan of about 2,000 questions costs roughly $1.

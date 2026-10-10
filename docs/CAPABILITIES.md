@@ -46,6 +46,7 @@ IntentSQL targets **SQLite**. It produces one read-only `SELECT` statement per q
 |---|---|
 | Products, differences, sums and ratios of stored columns | "revenue" = quantity × unit price, "total checking and savings balance" |
 | Date differences | "the longest stay" (days between check-in and check-out) |
+| Elapsed time to a reference date | "how many years had each employee worked by the end of 2024", "how old is each patient" (as of today, which the explanation states) |
 | Column vs column | "candidates with a lower support rate than oppose rate", "reviewers with the same name as the director" |
 
 ### Advanced queries
@@ -86,7 +87,7 @@ These are measured or observed, not hypothetical:
   - Spider's own conventions, such as whether to show the ranking value, DISTINCT, and gold errors.
 - **Not supported:**
   - arithmetic across aggregation levels ("budget left after paying salaries" = budget − SUM(salary));
-  - expressions with constants ("years worked by the end of 2024");
+  - other expressions with constants ("prices after a 10% discount");
   - arbitrary nesting of AND/OR beyond IN-lists and grouped name pairs;
   - UNION of two differently filtered queries (except "either of two people");
   - recursive hierarchies (all reports under a manager, at any depth).
