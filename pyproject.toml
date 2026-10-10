@@ -38,3 +38,5 @@ check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# FastAPI's TestClient still uses httpx through Starlette; the warning is about that shim, not our code.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]

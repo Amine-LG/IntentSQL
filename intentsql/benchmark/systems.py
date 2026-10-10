@@ -25,11 +25,14 @@ def intentsql_system(strategy: Strategy | None = None, *, keep_debug: bool = Fal
         trace = None
         if keep_debug:
             trace = {"explanation": result.explanation, "intent": result.intent,
-                     "confidence": result.confidence,
+                     "confidence": result.confidence, "verification": result.verification,
+                     "provider": result.provider, "models": result.usage.models,
                      "decisions": [d.__dict__ for d in result.decisions],
                      "alternatives": result.alternatives}
         return Prediction(_STATUS[result.status], result.sql, result.params, result.message,
                           result.usage.calls, result.usage.input_tokens,
                           result.usage.output_tokens, result.usage.retries,
-                          result.timings_ms.get("total", 0), trace, result.confidence)
+                          result.timings_ms.get("total", 0), trace,
+                          # Ranking for coverage curves: calibrated when available, else the raw score.
+                          result.confidence if result.confidence is not None else result.verification)
     return system
