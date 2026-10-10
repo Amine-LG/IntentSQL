@@ -6,7 +6,7 @@ Please report security problems privately through GitHub's "Report a vulnerabili
 
 ## How IntentSQL handles keys and data
 
-- **Keys stay on the server.** A key is posted once from the setup dialog, or entered without echo with `intent-sql keys`. It is stored in the workspace settings file with owner-only permissions (0600). Keys can also come from environment variables or `~/.config/intentsql/providers.env`. A key is:
+- **Keys stay on the server.** A key is posted once from the setup dialog, or entered without echo with `intent-sql keys`. It is stored in the workspace settings file with owner-only permissions (0600). On Windows, which has no such mode bits, the file is in the per-user `%LOCALAPPDATA%\IntentSQL` folder. Keys can also come from environment variables or `~/.config/intentsql/providers.env`. A key is:
   - sent only to its own provider, over HTTPS;
   - never returned by the API;
   - never written to `localStorage`, logs, exchanges or benchmark reports.

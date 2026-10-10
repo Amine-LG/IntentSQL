@@ -93,7 +93,8 @@ class WebTest(unittest.TestCase):
         self.assertEqual(back["active"]["model"], "jev-latest")      # the Liquid model does not follow
         self.assertEqual(self.client.post("/api/connection", json={"api_key": "short"}).status_code, 400)
         path = Path(self.tmp.name) / "connection.json"
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":                                     # Windows has no owner-only mode bits
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         bad = self.client.post("/api/connection", json={"provider": "openrouter"})
         self.assertEqual(bad.status_code, 400)
 

@@ -116,7 +116,8 @@ class CustomModelTest(unittest.TestCase):
         self.assertFalse(self.card(moved)["has_key"])
 
         stored = json.loads((Path(self.tmp.name) / "connection.json").read_text())
-        self.assertEqual((Path(self.tmp.name) / "connection.json").stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":                                     # Windows has no owner-only mode bits
+            self.assertEqual((Path(self.tmp.name) / "connection.json").stat().st_mode & 0o777, 0o600)
         self.assertNotIn("custom:lab-model", stored["keys"])
 
         removed = self.client.delete("/api/custom-models/lab-model").json()
