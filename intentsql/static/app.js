@@ -71,61 +71,157 @@ function applyTheme(theme) {
 applyTheme(store("intentsql.theme"));
 const developer = () => Boolean(store("intentsql.developer"));
 
-// ---------------------------------------------------------------- connection & settings
+// ---------------------------------------------------------------- model (provider) setup
+const STATE_TONE = { connected: "ok", demo: "demo", untested: "idle", not_configured: "idle",
+  auth_failed: "bad", no_credits: "bad", unavailable: "warn", budget_reached: "warn", error: "bad" };
+const PROVIDER_BLURB = {
+  typesafe: "TypeSafe's Jev, the model IntentSQL was developed and benchmarked with.",
+  liquid: "Liquid AI's d1, a decision model with the same question types.",
+  demo: "No model: fixed default choices. Shows how the app works; it does not understand questions.",
+};
+
 async function refreshConnection() {
   try {
     const conn = await api("/api/connection");
     state.connection = conn;
-    const ready = conn.has_key || conn.provider === "mock";
-    $("#conn-dot").className = "dot " + (ready ? "ok" : "bad");
-    $("#open-settings").title = `Settings · ${conn.label}`;
-    const picker = $("#conn-provider");
-    picker.replaceChildren(el("option", { value: "auto", text: "Automatic (first provider with a key)" }),
-      ...conn.providers.map((p) => el("option", { value: p.name, text: `${p.label}${p.has_key ? "" : " · no key"}` })));
-    picker.value = conn.requested === "auto" ? "auto" : conn.provider;
-    $("#conn-url").value = conn.url; $("#conn-model").value = conn.model;
-    $("#conn-advanced").hidden = conn.provider !== "typesafe";
-    $("#conn-key").closest("label").hidden = conn.provider === "mock";
-    $("#conn-provider-note").textContent = `Active: ${conn.label} · model ${conn.model}`;
-    $("#conn-status").textContent = ready ? "Ready." : "No API key saved for this provider yet.";
-    $("#welcome").hidden = ready;
+    renderModelChip(conn);
+    const active = conn.active;
+    const usable = active && (active.state !== "not_configured");
+    $("#welcome").hidden = Boolean(usable);
+    if (!$("#model-dialog").open) state.modelChoice = conn.provider || (conn.providers[0] || {}).name;
+    if ($("#model-dialog").open) renderModelDialog();
     return conn;
-  } catch {
-    $("#conn-dot").className = "dot bad";
+  } catch (err) {
+    $("#model-name").textContent = "Model unavailable";
     return null;
   }
 }
 
+function renderModelChip(conn) {
+  const active = conn.active;
+  const dot = $("#model-dot");
+  if (!active) {
+    dot.className = "state-dot idle"; $("#model-name").replaceChildren("Choose", el("span", { class: "hide-narrow", text: " a model" })); $("#model-state").textContent = "";
+    return;
+  }
+  dot.className = `state-dot ${STATE_TONE[active.state] || "idle"}`;
+  $("#model-name").replaceChildren(...(active.name === "demo" ? ["Demo", el("span", { class: "hide-narrow", text: " mode" })]
+    : [active.model_label, el("span", { class: "hide-narrow", text: ` · ${active.label}` })]));
+  $("#model-state").textContent = active.name === "demo" ? "" : active.state_text;
+  $("#model-chip").title = `${active.label} ${active.model_label}: ${active.state_text}${active.message ? ` — ${active.message}` : ""}`;
+}
+
+function openModelDialog() {
+  state.modelChoice = state.connection?.provider || "typesafe";
+  renderModelDialog();
+  $("#model-dialog").showModal();
+}
+
+function renderModelDialog() {
+  const conn = state.connection;
+  if (!conn) return;
+  $("#model-lock").hidden = !conn.locked_by_environment;
+  $("#model-lock").textContent = conn.locked_by_environment
+    ? "The model is set by the INTENTSQL_PROVIDER environment variable, so it cannot be changed here." : "";
+  $("#model-notice").hidden = !conn.notice;
+  $("#model-notice").textContent = conn.notice || "";
+  const cards = $("#provider-cards");
+  cards.replaceChildren(...conn.providers.map((p) => {
+    const selected = p.name === state.modelChoice;
+    const active = p.name === conn.provider;
+    return el("button", {
+      type: "button", role: "radio", "aria-checked": String(selected), class: `provider-card${selected ? " selected" : ""}`,
+      onclick: () => { state.modelChoice = p.name; renderModelDialog(); },
+    },
+    el("span", { class: "provider-name" }, p.name === "demo" ? "Demo mode" : `${p.model_label}`,
+      p.name === "demo" ? null : el("span", { class: "provider-by", text: ` by ${p.label}` })),
+    el("span", { class: "provider-blurb", text: PROVIDER_BLURB[p.name] || "" }),
+    el("span", { class: `badge-state ${STATE_TONE[p.state] || "idle"}` }, el("span", { class: "state-dot" }),
+      p.state_text, active ? " · in use" : ""));
+  }));
+  renderProviderDetail();
+}
+
+function renderProviderDetail() {
+  const conn = state.connection;
+  const p = conn.providers.find((x) => x.name === state.modelChoice);
+  const box = $("#provider-detail");
+  box.replaceChildren();
+  if (!p) return;
+  const active = p.name === conn.provider;
+  const status = el("p", { class: `provider-status ${STATE_TONE[p.state] || "idle"}`, role: "status" },
+    el("strong", { text: p.state_text }), p.message ? ` — ${p.message}` : "");
+  box.append(status);
+  if (p.needs_key) {
+    const keyInput = el("input", { type: "password", id: "provider-key", autocomplete: "off", spellcheck: "false",
+      placeholder: p.has_key ? "A key is saved (leave blank to keep it)" : "Paste your API key" });
+    box.append(el("label", { class: "field" }, "API key", keyInput));
+    const help = (p.key_help || "").split(": ");
+    box.append(el("p", { class: "muted small" }, help[0], help[1] ? el("span", {}, ": ", el("a", { href: help[1], target: "_blank", rel: "noopener", text: help[1].replace("https://", "") })) : ""));
+    if (p.models.length > 1) {
+      const select = el("select", { id: "provider-model" }, p.models.map((m) => el("option", { value: m, text: m, selected: m === p.model })));
+      box.append(el("label", { class: "field inline" }, "Model", select));
+    }
+  }
+  const actions = el("div", { class: "detail-actions" });
+  const busy = (button, text) => { button.disabled = true; button.textContent = text; };
+  const useLabel = active ? (p.needs_key ? "Save" : "In use") : (p.name === "demo" ? "Use demo mode" : "Save and use");
+  const use = el("button", { type: "button", class: "button primary", text: useLabel, disabled: conn.locked_by_environment && !active,
+    onclick: async () => {
+      busy(use, "Saving…");
+      try {
+        const body = { provider: p.name };
+        const key = $("#provider-key")?.value.trim();
+        if (key) body.api_key = key;
+        const model = $("#provider-model")?.value;
+        if (model) body.model = model;
+        state.connection = await api("/api/connection", { method: "POST", body: JSON.stringify(body) });
+        renderModelChip(state.connection); renderModelDialog();
+        $("#welcome").hidden = state.connection.active?.state !== "not_configured";
+        toast(p.name === "demo" ? "Demo mode on" : `${p.model_label} selected`);
+      } catch (err) { box.prepend(el("p", { class: "provider-status bad", text: err.message })); }
+      finally { use.disabled = false; use.textContent = useLabel; }
+    } });
+  actions.append(use);
+  if (active && p.needs_key && p.has_key) {
+    const test = el("button", { type: "button", class: "button", text: "Test connection",
+      onclick: async () => {
+        busy(test, "Testing…");
+        try {
+          const out = await api("/api/connection/test", { method: "POST" });
+          state.connection = out; renderModelChip(out); renderModelDialog();
+          toast(out.ok ? "Connected" : "Connection failed");
+        } catch (err) { toast(err.message); renderProviderDetail(); }
+      } });
+    actions.append(test);
+    actions.append(el("button", { type: "button", class: "button ghost danger", text: "Remove key",
+      onclick: async () => {
+        state.connection = await api("/api/connection", { method: "POST", body: JSON.stringify({ provider: p.name, clear_key: true }) });
+        renderModelChip(state.connection); renderModelDialog(); toast("Key removed");
+      } }));
+  }
+  box.append(actions);
+  if (p.needs_key && !p.has_key) box.append(el("p", { class: "muted small", text: "After saving, use Test connection: IntentSQL sends one tiny yes/no question (a fraction of a cent)." }));
+}
+
+$("#model-chip").addEventListener("click", openModelDialog);
+$("#welcome-setup").addEventListener("click", openModelDialog);
+$("#welcome-demo").addEventListener("click", async () => {
+  try {
+    state.connection = await api("/api/connection", { method: "POST", body: JSON.stringify({ provider: "demo" }) });
+    renderModelChip(state.connection); $("#welcome").hidden = true; toast("Demo mode on");
+  } catch (err) { toast(err.message); }
+});
+
+// ---------------------------------------------------------------- display settings
 function openSettings() {
-  refreshConnection();
   $("#theme-select").value = store("intentsql.theme") || "";
   $("#developer").checked = developer();
   $("#settings-dialog").showModal();
-  $("#conn-key").focus();
 }
 $("#open-settings").addEventListener("click", openSettings);
-$("#welcome-settings").addEventListener("click", openSettings);
 $("#theme-select").addEventListener("change", (e) => { store("intentsql.theme", e.target.value || null); applyTheme(e.target.value); });
-$("#developer").addEventListener("change", (e) => { store("intentsql.developer", e.target.checked); if (state.result) renderHow(); });
-$("#conn-provider").addEventListener("change", () => {
-  $("#conn-advanced").hidden = $("#conn-provider").value !== "typesafe";
-  $("#conn-key").closest("label").hidden = $("#conn-provider").value === "mock";
-  $("#conn-key").value = "";
-});
-$("#conn-save").addEventListener("click", async (event) => {
-  event.preventDefault();
-  try {
-    const provider = $("#conn-provider").value;
-    const typesafe = provider === "typesafe";
-    await api("/api/connection", { method: "POST", body: JSON.stringify({
-      provider, api_key: $("#conn-key").value || null,
-      url: typesafe ? $("#conn-url").value || null : null, model: typesafe ? $("#conn-model").value || null : null }) });
-    $("#conn-key").value = "";
-    await refreshConnection();
-    $("#settings-dialog").close();
-    toast("Settings saved");
-  } catch (err) { $("#conn-status").textContent = err.message; }
-});
+$("#developer").addEventListener("change", (e) => { store("intentsql.developer", e.target.checked); if (state.result) renderInspector(); });
 
 // ---------------------------------------------------------------- sidebar
 function selectTab(name) {
@@ -299,6 +395,7 @@ async function ask() {
     });
     remember(text, result.status);
     showAnswer(result);
+    refreshConnection();          // a real answer (or failure) updates the model's status
   } catch (err) {
     showAnswer({ status: "error", question: text, message: err.message, rows: [], columns: [] });
   } finally {
@@ -330,7 +427,7 @@ function showAnswer(result) {
   $("#answer").hidden = false;
   $("#answer-title").textContent = result.question || question.value.trim();
   let [tone, label] = (CONFIDENCE[result.status] || CONFIDENCE.error)(result.confidence, result.verification);
-  if (result.provider === "mock" && result.sql) [tone, label] = ["warn", "Mock answer"];
+  if (result.provider === "demo" && result.sql) [tone, label] = ["warn", "Demo answer"];
   const pill = $("#confidence");
   pill.className = `pill ${tone}`; pill.textContent = label;
   pill.title = result.confidence !== null && result.confidence !== undefined
@@ -341,12 +438,13 @@ function showAnswer(result) {
   renderAlternatives();
   const notice = $("#notice");
   let message = result.message || "";
-  if (result.provider === "mock") message = ["Offline mock provider: decisions are fixed defaults, not a reading of your question.", message].filter(Boolean).join(" ");
+  if (result.provider === "demo") message = ["Demo mode: the choices are fixed defaults, not a reading of your question.", message].filter(Boolean).join(" ");
   if (result.status === "refused" && !message) message = "IntentSQL could not answer this question.";
   notice.hidden = !message;
   notice.className = "notice" + (result.status === "ambiguous" ? " warn" : ["refused", "error"].includes(result.status) ? " bad" : "");
   notice.textContent = message;
-  renderHow();
+  state.stage = state.stage || null;
+  renderInspector();
   $("#answer").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -448,55 +546,233 @@ function highlight(sql) {
   return out;
 }
 
-// ---------------------------------------------------------------- how it was answered
+// ---------------------------------------------------------------- decision inspector
+// Shows what the pipeline recorded -- nothing here is invented.  Per-decision probabilities
+// are the model's own; the overall confidence is a separate, calibrated estimate.
 const PURPOSE = {
-  "request scope": "Kind of request", output: "Shown", "literal role": "Value role", "literal column": "Value matched to",
-  "literal operator": "Comparison", "literal count": "Counted", "implicit value": "Implied filter", grouping: "Grouping",
-  ordering: "Ordering", limit: "Limit", relationship: "Relationship", "relationship role": "Relationship",
-  "aggregate comparison": "Comparison", "missing values": "Missing values", verification: "Check",
-  exclusion: "Exclusion", "universal condition": "Every record", percentage: "Percentage", "join route": "Route",
-  "column comparison": "Comparison", "output conflict": "Count or total",
+  "request scope": "Kind of request", output: "What to show", "literal role": "What a value is for",
+  "literal column": "Which column a value belongs to", "literal operator": "How a value is compared",
+  "literal count": "What is counted", "implicit value": "Implied filter", grouping: "Grouping",
+  ordering: "Ordering", limit: "How many results", relationship: "Relationship", "relationship role": "Relationship",
+  "aggregate comparison": "Comparison with an aggregate", "missing values": "Missing values", verification: "Check",
+  exclusion: "Exclusion", "universal condition": "Every record must match", percentage: "Percentage",
+  "join route": "Join route", "column comparison": "Column against column", "output conflict": "Count or total",
+  "shared attribute": "Shared attribute",
 };
-function renderHow() {
+const STAGE_OF = {
+  output: "understand", "output conflict": "understand", percentage: "understand", "request scope": "understand",
+  "literal role": "values", "literal column": "values", "literal operator": "values", "literal count": "values",
+  "implicit value": "values", exclusion: "values", "universal condition": "values", "missing values": "values",
+  "shared attribute": "values",
+};
+const GROUP_TITLE = { understand: "Understanding the question", values: "Values and filters", structure: "Shape of the answer" };
+
+function decisionsOf(result) {
+  return (result.decisions || []).filter((d) => d.purpose !== "verification" && !(d.key === "scope" && d.selected === "read"));
+}
+
+function stagesOf(result) {
+  const g = result.grounding || {};
+  const plan = planTables(result.plan);
+  const rows = (state.reading?.rows || []).length;
+  return [
+    { id: "found", title: "Found", metric: g.literals ? `${plural(g.literals.length, "value")} · ${plural((g.tables || []).length, "table")}` : "—" },
+    { id: "decided", title: "Decided", metric: plural(decisionsOf(result).length, "decision") },
+    { id: "planned", title: "Planned", metric: plan.tables.length ? plural(plan.tables.length, "table") : "—" },
+    { id: "checked", title: "Checked", metric: result.provider === "demo" ? "not checked (demo)" : result.verification !== null && result.verification !== undefined ? `${Math.round(result.verification * 100)}% match` : "—" },
+    { id: "sql", title: "SQL & data", metric: result.sql ? plural(rows, "row") : "—" },
+  ];
+}
+
+function renderInspector() {
   const result = state.result;
-  const body = $("#how-body");
-  body.replaceChildren();
-  if (!result) return;
-  const t = result.timings_ms || {}; const u = result.usage || {};
-  const providerLabel = (state.connection && state.connection.providers || []).find((p) => p.name === u.provider)?.label || u.provider;
-  const cost = u.cost_usd ? ` · $${Number(u.cost_usd).toFixed(5)}` : "";
-  const items = [["Total time", t.total !== undefined ? `${t.total} ms` : "—"],
-    ["Jev", u.calls ? `${plural(u.calls, "call")} · ${(u.input_tokens || 0).toLocaleString()} input tokens${cost}` : "—"],
-    ["Provider", providerLabel ? `${providerLabel}${(u.models || []).length ? ` (${u.models.join(", ")})` : ""}` : "—"]];
+  const section = $("#inspector");
+  section.hidden = !result || (!result.decisions && !result.grounding);
+  if (section.hidden) return;
+  const u = result.usage || {};
+  const t = result.timings_ms || {};
+  $("#inspector-meta").textContent = [t.total !== undefined ? `${t.total} ms` : "", u.calls ? plural(u.calls, "model call") : ""].filter(Boolean).join(" · ");
+  const stages = stagesOf(result);
+  $("#stages").replaceChildren(...stages.map((stage, i) => el("li", {},
+    el("button", { type: "button", role: "tab", "aria-selected": String(state.stage === stage.id), class: "stage",
+      onclick: () => { state.stage = state.stage === stage.id ? null : stage.id; renderInspector(); } },
+    el("span", { class: "stage-n", text: String(i + 1) }),
+    el("span", { class: "stage-title", text: stage.title }),
+    el("span", { class: "stage-metric", text: stage.metric })))));
+  const panel = $("#stage-panel");
+  panel.hidden = !state.stage;
+  panel.replaceChildren();
+  if (!state.stage) return;
+  ({ found: panelFound, decided: panelDecided, planned: panelPlanned, checked: panelChecked, sql: panelSql })[state.stage](panel, result);
+}
+
+function note(text) { return el("p", { class: "panel-note", text }); }
+function chip(text, cls = "") { return el("span", { class: `chip ${cls}`, text }); }
+function bar(p, cls = "") {
+  const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+  return el("span", { class: `bar ${cls}`, role: "img", "aria-label": `${pct} percent` }, el("span", { style: `width:${pct}%` }));
+}
+function colLabel(key) { const [t, c] = String(key).split("."); return `${t.replaceAll("_", " ")} · ${(c || "").replaceAll("_", " ")}`; }
+
+function panelFound(panel, result) {
+  const g = result.grounding || {};
+  panel.append(note("Found by code in your question and the database, before any model call."));
+  const lits = g.literals || [];
+  panel.append(el("h4", { text: "Values in your question" }));
+  panel.append(lits.length ? el("ul", { class: "evidence" }, lits.map((l) => el("li", {},
+    chip(l.kind === "text" ? `“${l.text}”` : l.text, "value"),
+    el("span", { class: "arrow", "aria-hidden": "true", text: "→" }),
+    l.columns.length ? el("span", { class: "chips" }, l.columns.map((c) => chip(colLabel(c), "col")))
+      : el("span", { class: "muted small", text: l.kind === "number" ? "a number (its role is decided next)" : l.kind === "period" ? `a period: ${l.value}` : "not stored in the database" })))) : el("p", { class: "muted small", text: "No values (names, numbers or dates) in the question." }));
+  if ((g.tables || []).length || (g.columns || []).length) {
+    panel.append(el("h4", { text: "Words that point to the schema" }));
+    panel.append(el("div", { class: "chips" }, [...(g.tables || []).map((t) => chip(t.label, "table")),
+      ...(g.columns || []).map((c) => chip(colLabel(c.key), "col"))]));
+  }
+  if ((g.measures || []).length) {
+    panel.append(el("h4", { text: "Calculations offered" }));
+    panel.append(el("div", { class: "chips" }, g.measures.map((m) => chip(m, "measure"))));
+  }
+  panel.append(el("p", { class: "muted small", text: `${g.schema_tables || "All"} tables were available to choose from.` }));
+}
+
+function decisionCard(d) {
+  const probs = d.probabilities || null;
+  const options = d.options || {};
+  let chosenKey = null; let chosenP = Number(d.probability) || 0;
+  if (probs && Object.keys(probs).length) {
+    chosenKey = Object.entries(probs).sort((a, b) => b[1] - a[1])[0][0];
+    chosenP = probs[chosenKey];
+  }
+  const isNoul = !probs;
+  const chosenText = isNoul ? (chosenP >= 0.5 ? "Yes" : "No") : (options[chosenKey] || (typeof d.selected === "string" ? d.selected : chosenKey));
+  const question = String(d.asked || d.question || "");
+  const marked = (text) => String(text).split(/(\[[^\]]*\])/).map((part) => part.startsWith("[") ? el("mark", { text: part.slice(1, -1) }) : part);
+  const others = probs ? Object.entries(probs).filter(([k]) => k !== chosenKey).sort((a, b) => b[1] - a[1]).slice(0, 4) : [];
+  const card = el("li", { class: "decision-card" },
+    el("div", { class: "decision-top" },
+      el("span", { class: "decision-kind", text: PURPOSE[d.purpose] || d.purpose }),
+      el("span", { class: "decision-p", text: `${Math.round((isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP) * 100)}%` })),
+    el("p", { class: "decision-q" }, marked(question)),
+    d.context ? el("p", { class: "decision-context" }, "“", ...marked(d.context), "”") : null,
+    el("div", { class: "decision-choice" }, el("span", { class: "chosen", text: chosenText }), bar(isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP, "chosen-bar")));
+  if (others.length && others.some(([, p]) => p > 0.005)) {
+    card.append(el("details", { class: "others" }, el("summary", { text: Object.keys(probs).length - 1 > others.length ? `Top ${others.length} of ${Object.keys(probs).length - 1} other options` : `Other options (${others.length})` }),
+      el("ul", {}, others.map(([k, p]) => el("li", {}, el("span", { class: "other-text", text: options[k] || k }), bar(p), el("span", { class: "other-p", text: `${Math.round(p * 100)}%` }))))));
+  }
+  return card;
+}
+
+function panelDecided(panel, result) {
+  const decisions = decisionsOf(result);
+  panel.append(note("The model chose among options that IntentSQL built from your database. Percentages are the model's probability for each choice — not the chance that the whole answer is right."));
+  if (!decisions.length) { panel.append(el("p", { class: "muted small", text: "No decisions were recorded for this answer." })); return; }
+  const groups = { understand: [], values: [], structure: [] };
+  for (const d of decisions) groups[STAGE_OF[d.purpose] || "structure"].push(d);
+  for (const [id, list] of Object.entries(groups)) {
+    if (!list.length) continue;
+    panel.append(el("h4", { text: GROUP_TITLE[id] }), el("ol", { class: "decision-list" }, list.map(decisionCard)));
+  }
+  if (result.provider === "demo") panel.append(el("p", { class: "panel-note warn", text: "Demo mode: these are fixed defaults, not a model's reading of your question." }));
+}
+
+function planTables(plan) {
+  const tables = []; const joins = [];
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if (node.node === "From") {
+      if (node.base?.node === "TableRef" && !tables.includes(node.base.table)) tables.push(node.base.table);
+      for (const j of node.joins || []) {
+        const right = j.right?.table;
+        if (right && !tables.includes(right)) tables.push(right);
+        const on = (j.on || []).map((pair) => `${pair[0]?.column} = ${pair[1]?.column}`).join(", ");
+        joins.push({ to: right, on, kind: j.kind || "INNER" });
+      }
+      if (node.base?.node === "Derived") visit(node.base.query);
+      return;
+    }
+    for (const value of Object.values(node)) if (value && typeof value === "object") visit(value);
+  };
+  visit(plan);
+  return { tables, joins };
+}
+
+function describeIntent(intent) {
+  if (!intent) return [];
+  const col = (k) => (k ? colLabel(k) : "");
+  const rows = [];
+  const outputs = (intent.outputs || []).map((o) => o.star ? `all of ${o.table}` : o.func === "COUNT" && !o.column ? `number of ${o.table}` : o.func && o.func !== "EXPR" ? `${o.func.toLowerCase()}(${col(o.column)})` : col(o.column));
+  if (outputs.length) rows.push(["Show", outputs]);
+  const conds = (intent.conditions || []).map((c) => {
+    if (c.kind === "absent") return `no related ${c.table}`;
+    if (c.kind === "related") return `has related ${c.table}`;
+    const values = (c.values || []).map((v) => (typeof v === "string" ? `'${v}'` : v)).join(", ");
+    return `${col(c.column)} ${c.kind === "compare" || c.kind === "text" ? c.op || "=" : c.kind.replaceAll("_", " ")} ${values}`.trim();
+  });
+  if (conds.length) rows.push([intent.connector === "OR" ? "Any of" : "Where", conds]);
+  if ((intent.excluded || []).length) rows.push(["Except", intent.excluded.map((c) => `${col(c.column)} ${c.op || "="} ${(c.values || []).join(", ")}`)]);
+  if ((intent.group_by || []).length) rows.push(["Per", intent.group_by.map(col)]);
+  if ((intent.order || []).length) rows.push(["Order", intent.order.map((o) => `${o.func ? `${o.func.toLowerCase()} ` : ""}${o.column ? col(o.column) : `number of ${o.table}`} ${o.desc ? "↓" : "↑"}`)]);
+  if (intent.limit) rows.push(["Keep", [`top ${intent.limit}${intent.offset ? ` after ${intent.offset}` : ""}`]]);
+  return rows;
+}
+
+function panelPlanned(panel, result) {
+  panel.append(note("Deterministic code turned the decisions into a typed plan, then chose the joins from the database's keys."));
+  const { tables, joins } = planTables(result.plan);
+  if (tables.length) {
+    panel.append(el("h4", { text: "Tables and how they are joined" }));
+    const diagram = el("div", { class: "join-diagram" }, el("span", { class: "node", text: tables[0] }));
+    for (const j of joins) diagram.append(el("span", { class: "edge", title: j.kind, text: j.on || "" }), el("span", { class: "node", text: j.to }));
+    panel.append(diagram);
+  }
+  const rows = describeIntent(result.intent);
+  if (rows.length) {
+    panel.append(el("h4", { text: "Structured interpretation" }));
+    panel.append(el("dl", { class: "plan-rows" }, rows.flatMap(([k, items]) => [el("dt", { text: k }), el("dd", {}, el("div", { class: "chips" }, items.map((i) => chip(i, "plan"))))])));
+  }
+  if (!tables.length && !rows.length) panel.append(el("p", { class: "muted small", text: "No plan was built for this request." }));
+}
+
+function panelChecked(panel, result) {
+  panel.append(note("Before showing the answer, IntentSQL asks the model whether the plain-English reading matches your question, and compares it with other readings that would return different data."));
+  if (result.provider === "demo") {
+    panel.append(el("p", { class: "panel-note warn", text: "Demo mode: no model checked this answer. The values below are fixed defaults, not evidence." }));
+  }
+  if (result.verification === null || result.verification === undefined) {
+    panel.append(el("p", { class: "muted small", text: "No check was run for this answer." })); return;
+  }
+  panel.append(el("div", { class: "check-row" }, el("span", { text: "Reading matches the question" }), bar(result.verification), el("strong", { text: `${Math.round(result.verification * 100)}%` })));
   if (result.confidence !== null && result.confidence !== undefined) {
-    items.push(["Confidence", `about ${Math.round(result.confidence * 100)}% of answers like this were correct in testing`]);
-  } else if (result.verification !== null && result.verification !== undefined) {
-    items.push(["Check", `${Math.round(result.verification * 100)}% that the reading matches the question (not calibrated for this provider)`]);
+    panel.append(el("p", { class: "small", text: `Overall: in testing with this model, about ${Math.round(result.confidence * 100)}% of answers with this level of evidence were correct.` }));
+  } else if (result.provider !== "demo") {
+    panel.append(el("p", { class: "muted small", text: "No calibrated overall confidence for this model yet; the check score above is the model's own." }));
   }
-  const dl = el("dl", { class: "steps" });
-  for (const [k, v] of items) dl.append(el("dt", { text: k }), el("dd", { text: v }));
-  body.append(dl);
-  const decisions = (result.decisions || []).filter((d) => (d.purpose !== "verification" || d.key === "verify")
-    && !(d.key === "scope" && d.selected === "read") && d.selected !== null && d.selected !== undefined
-    && (developer() || d.purpose !== "literal role"));
-  if (decisions.length) {
-    body.append(el("p", { class: "eyebrow", text: "Decisions" }));
-    body.append(el("ul", { class: "decisions" }, decisions.map((d) => {
-      const p = Math.round(Number(d.probability) * 100);
-      const selected = typeof d.selected === "object" && d.selected !== null ? JSON.stringify(d.selected) : String(d.selected);
-      return el("li", {},
-        el("span", { class: "what", text: PURPOSE[d.purpose] || d.purpose }),
-        el("span", {}, d.purpose === "output" ? `${d.question}${selected === "value" ? "" : ` (${selected.toLowerCase()})`}` : d.question,
-          el("div", { class: "meter" }, el("span", { style: `width:${p}%` }))),
-        el("span", { class: "p", text: `${p}%` }));
-    })));
+  const pick = (result.decisions || []).find((d) => d.key === "pick");
+  if (pick && pick.options) {
+    panel.append(el("h4", { text: "Readings compared" }));
+    panel.append(el("ul", { class: "readings" }, Object.entries(pick.options).map(([k, text]) => el("li", { class: k === pick.selected ? "picked" : "" },
+      el("span", { class: "reading-letter", text: k }), el("span", { class: "reading-text", text }), bar(pick.probabilities?.[k] || 0), el("span", { class: "other-p", text: `${Math.round((pick.probabilities?.[k] || 0) * 100)}%` })))));
   }
+}
+
+function panelSql(panel, result) {
+  panel.append(note("The SQL runs on a read-only connection. Values are passed as bound parameters, never pasted into the SQL."));
+  if (result.sql) {
+    panel.append(el("pre", { class: "sql small-sql" }, el("code", {}, highlight(result.sql))));
+    if ((result.params || []).length) panel.append(el("p", { class: "small" }, "Bound values: ", el("span", { class: "chips" }, result.params.map((v) => chip(String(v), "value")))));
+  }
+  const u = result.usage || {};
+  const providerLabel = (state.connection?.providers || []).find((p) => p.name === (result.provider || u.provider));
+  const facts = [["Model", providerLabel ? (providerLabel.name === "demo" ? "Demo mode (no model)" : `${providerLabel.model_label} · ${providerLabel.label}${(u.models || []).length ? ` (${u.models.join(", ")})` : ""}`) : "—"],
+    ["Model calls", u.calls ? `${u.calls} · ${(u.input_tokens || 0).toLocaleString()} input tokens${u.cost_usd ? ` · $${Number(u.cost_usd).toFixed(5)}` : ""}` : "—"],
+    ["Time", Object.entries(result.timings_ms || {}).map(([k, v]) => `${k} ${v} ms`).join(" · ") || "—"]];
+  panel.append(el("dl", { class: "steps" }, facts.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })])));
   if (developer()) {
     const tech = (title, value) => el("details", { class: "tech" }, el("summary", { text: title }), el("pre", { text: JSON.stringify(value, null, 2) }));
-    body.append(tech("Semantic plan", result.intent), tech("SQL plan (IR)", result.plan),
-      tech("Parameterized SQL", { sql: result.sql, params: result.params }),
-      tech(`Jev calls (${(result.exchanges || []).length})`, result.exchanges),
-      tech("Timings", result.timings_ms));
+    panel.append(tech("Semantic plan (JSON)", result.intent), tech("SQL plan (JSON)", result.plan),
+      tech("Grounding (JSON)", result.grounding), tech(`Model exchanges (${(result.exchanges || []).length})`, result.exchanges));
   }
 }
 

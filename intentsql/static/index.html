@@ -30,8 +30,12 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14"/></svg><span class="hide-narrow">Open database</span>
     </button>
     <button id="open-console" class="button ghost hide-narrow" type="button">SQL console</button>
-    <button id="open-settings" class="icon-button" type="button" aria-label="Settings">
-      <span id="conn-dot" class="dot" aria-hidden="true"></span>
+    <button id="model-chip" class="model-chip" type="button" aria-haspopup="dialog" aria-label="Model settings">
+      <span id="model-dot" class="state-dot" aria-hidden="true"></span>
+      <span id="model-name" class="model-name">Model</span>
+      <span id="model-state" class="model-state hide-narrow"></span>
+    </button>
+    <button id="open-settings" class="icon-button" type="button" aria-label="Display settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
     </button>
   </div>
@@ -56,10 +60,13 @@
   </aside>
 
   <main id="main">
-    <section id="welcome" class="card welcome" hidden>
-      <h1>Connect IntentSQL to Jev</h1>
-      <p>IntentSQL turns questions into SQL by asking Jev, TypeSafe's decision model, small grounded questions about your database. Choose a provider (OpenRouter, TypeSafe or OpenJEV) and add its API key to start; the key stays on this computer.</p>
-      <button id="welcome-settings" class="button primary" type="button">Add API key</button>
+    <section id="welcome" class="card welcome" hidden aria-labelledby="welcome-title">
+      <h1 id="welcome-title">Choose a model to get started</h1>
+      <p>IntentSQL asks a small <em>decision model</em> to choose between readings of your question that it builds from your database, then writes and checks the SQL itself. Connect a model, or look around in demo mode first.</p>
+      <div class="welcome-actions">
+        <button id="welcome-setup" class="button primary" type="button">Set up a model</button>
+        <button id="welcome-demo" class="button" type="button">Try demo mode</button>
+      </div>
     </section>
 
     <form id="ask-form" class="ask card" autocomplete="off">
@@ -121,31 +128,21 @@
         <pre id="sql" class="sql"><code></code></pre>
       </section>
 
-      <details id="how" class="how">
-        <summary>How this was answered</summary>
-        <div id="how-body"></div>
-      </details>
+      <section id="inspector" class="inspector" aria-labelledby="inspector-title">
+        <div class="section-head">
+          <p id="inspector-title" class="eyebrow">How IntentSQL decided</p>
+          <span id="inspector-meta" class="muted small"></span>
+        </div>
+        <ol id="stages" class="stages" role="tablist" aria-label="Stages of the answer"></ol>
+        <div id="stage-panel" class="stage-panel" role="tabpanel" hidden></div>
+      </section>
     </article>
   </main>
 </div>
 
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <form method="dialog" id="settings-form">
-    <h2 id="settings-title">Settings</h2>
-    <fieldset>
-      <legend>Jev provider</legend>
-      <label>Provider
-        <select id="conn-provider"></select>
-      </label>
-      <p id="conn-provider-note" class="muted small"></p>
-      <label>API key for this provider <input id="conn-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
-      <p class="muted small">Keys are saved only in your local IntentSQL workspace and are never sent back to the page.</p>
-      <details class="advanced" id="conn-advanced"><summary>Advanced (TypeSafe direct)</summary>
-        <label>Endpoint <input id="conn-url" type="url"></label>
-        <label>Model <input id="conn-model" type="text"></label>
-      </details>
-      <p id="conn-status" class="muted small" role="status"></p>
-    </fieldset>
+    <h2 id="settings-title">Display</h2>
     <fieldset>
       <legend>Display</legend>
       <label class="inline">Theme
@@ -155,7 +152,21 @@
     </fieldset>
     <div class="dialog-actions">
       <button value="cancel" class="button ghost">Close</button>
-      <button id="conn-save" class="button primary" value="default">Save</button>
+      <button class="button primary" value="default">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="model-dialog" class="model-dialog" aria-labelledby="model-title">
+  <form method="dialog" id="model-form">
+    <h2 id="model-title">Decision model</h2>
+    <p class="muted small">IntentSQL sends small multiple-choice questions to a decision model. Pick one; keys stay on this computer and are never shown again.</p>
+    <p id="model-lock" class="notice" hidden></p>
+    <p id="model-notice" class="notice warn" hidden></p>
+    <div id="provider-cards" class="provider-cards" role="radiogroup" aria-label="Model"></div>
+    <div id="provider-detail" class="provider-detail"></div>
+    <div class="dialog-actions">
+      <button value="cancel" class="button ghost">Close</button>
     </div>
   </form>
 </dialog>

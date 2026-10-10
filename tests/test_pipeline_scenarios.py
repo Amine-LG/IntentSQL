@@ -232,6 +232,18 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(rows(result), [(5,)])          # alternative B: no status filter
         self.assertEqual(len(result.alternatives), 1)
 
+    def test_inspector_decisions_carry_the_question_as_asked(self):
+        result = self.ask("How many paid orders are there in each city?", [
+            ("^count$", "", "how many order records"), ("^group$", "", "customer city"),
+            ("^role_", r"\[paid\]", "filtered by"), ("^lop_", r"\[paid\]", "exactly this value")])
+        decisions = {d["key"]: d for d in result.to_dict(debug=True)["decisions"]}
+        group = decisions["group"]
+        self.assertIn("your question", group["asked"])          # not the chosen option's text
+        self.assertNotIn("`request`", group["asked"])
+        chosen = max(group["probabilities"], key=group["probabilities"].get)
+        self.assertIn("customer city", group["options"][chosen])  # option texts, not bare keys
+        self.assertIn("[paid]", decisions["role_L1"]["context"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,7 @@ class Answer:
     exchanges: list[Exchange] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     timings_ms: dict[str, int] = field(default_factory=dict)
+    grounding: dict[str, Any] | None = None   # what grounding found (for the decision inspector)
 
     def to_dict(self, *, debug: bool = True) -> dict[str, Any]:
         data = {
@@ -80,11 +81,42 @@ class Answer:
             "usage": self.usage.as_dict(), "timings_ms": self.timings_ms,
         }
         if debug:
+            data["grounding"] = self.grounding
             data["plan"] = self.plan
             data["intent"] = self.intent
-            data["decisions"] = [asdict(d) for d in self.decisions]
+            data["decisions"] = _described(self.decisions, self.exchanges)
             data["exchanges"] = [asdict(e) for e in self.exchanges]
         return data
+
+
+_NAMES = (("`request`", "your question"), ("`value`", "the phrase"), ("`interpretations`", "the readings"),
+          ("`database`", "the database"))
+
+
+def _described(decisions: list[Decision], exchanges: list[Exchange]) -> list[dict[str, Any]]:
+    """Decisions as dicts, each with the question exactly as asked (``asked``, ``context``)
+    and the option texts that were offered, taken from the request that was sent."""
+    sent: dict[str, dict[str, Any]] = {}
+    for exchange in exchanges:
+        sent.update(exchange.questions)
+    described = []
+    for decision in decisions:
+        data = asdict(decision)
+        question = sent.get(decision.key)
+        if question:
+            instructions = question.get("instructions")
+            if isinstance(instructions, dict):
+                text, context = str(instructions.get("question", "")), instructions.get("value")
+            else:
+                text, context = str(instructions), None
+            for name, plain in _NAMES:
+                text = text.replace(name, plain)
+            data["asked"], data["context"] = text, context if isinstance(context, str) else None
+            criteria = question.get("criteria")
+            if not data["options"] and isinstance(criteria, dict):
+                data["options"] = {k: str(v) for k, v in criteria.items()}
+        described.append(data)
+    return described
 
 
 def execute_read(db_path: str | Path, sql: str, params: tuple[Any, ...], *,
@@ -231,6 +263,26 @@ def _explain_empty(schema, db_path: str | Path, intent: Intent) -> str | None:
 CALIBRATIONS: dict[str, tuple[tuple[float, float], ...]] = {"typesafe": CALIBRATION}
 
 
+def _grounding_summary(g: Any) -> dict[str, Any]:
+    """Deterministic evidence found before any model call: values found in the request and
+    the stored columns they match, the tables and columns the request names, and derived
+    measures proposed for it."""
+    schema = g.schema
+    literals = [{"text": lit.text, "kind": lit.kind,
+                 "value": lit.value if lit.kind != "period" else lit.value[2],
+                 "columns": [c for c in lit.columns if c in {k.key for k in schema.columns}][:4],
+                 "stored": lit.exact} for lit in g.literals]
+    tables = sorted(((t, link) for t, link in g.table_named.items() if link > 0 and t in schema.tables
+                     and schema.tables[t].role_of is None), key=lambda x: -x[1])[:6]
+    columns = sorted(((k, link) for k, link in g.column_link.items() if link >= 0.5 and "__m" not in k),
+                     key=lambda x: -x[1])[:8]
+    measures = [c.label for c in schema.columns if c.formula]
+    return {"literals": literals,
+            "tables": [{"name": t, "label": schema.tables[t].label, "link": round(link, 2)} for t, link in tables],
+            "columns": [{"key": k, "label": schema.column(k).label, "link": round(link, 2)} for k, link in columns],
+            "measures": measures, "schema_tables": sum(1 for t in schema.tables.values() if t.role_of is None)}
+
+
 def calibrated(verification: float, alternatives: int,
                table: tuple[tuple[float, float], ...] = CALIBRATION) -> float:
     """Probability that an answer is right, from its verification score and the number of
@@ -269,6 +321,7 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         result.message = f"Could not open the database: {exc}"
         return result
     grounding = ground(question, schema)
+    result.grounding = _grounding_summary(grounding)
     t = mark("ground", t)
 
     def ask(state, questions, purpose):
