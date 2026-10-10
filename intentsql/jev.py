@@ -47,7 +47,7 @@ class JevError(RuntimeError):
     def __init__(self, message: str, *, fatal: bool = False, kind: str = "error") -> None:
         super().__init__(message)
         self.fatal = fatal
-        # auth | credits | budget | unavailable | request | not_configured | protocol | error
+        # auth | credits | budget | unavailable | request | not_configured | protocol | unsupported | error
         self.kind = kind
 
 
@@ -155,17 +155,17 @@ class Usage:
 
 def _validate(key: str, question: Question, raw: Any) -> Answer:
     if not isinstance(raw, dict):
-        raise JevError(f"Answer {key} is not an object")
+        raise JevError(f"answer {key} is not an object", kind="protocol")
     if question.kind == "noul":
         p = raw.get("noul")
         if not isinstance(p, (int, float)) or not math.isfinite(p) or not 0 <= p <= 1:
-            raise JevError(f"Answer {key} has no valid noul probability")
+            raise JevError(f"answer {key} has no 'noul' probability between 0 and 1", kind="protocol")
         return Answer("noul", p=float(p))
     if question.kind == "score":
         value = raw.get("score")
         top = len(question.levels) - 1
         if not isinstance(value, (int, float)) or not math.isfinite(value) or not -0.01 <= value <= top + 0.01:
-            raise JevError(f"Answer {key} has no valid score")
+            raise JevError(f"answer {key} has no valid 'score'", kind="protocol")
         levels = {str(i) for i in range(top + 1)}
         probabilities = {str(k): float(v) for k, v in (raw.get("probabilities") or {}).items()
                          if str(k) in levels and isinstance(v, (int, float)) and math.isfinite(v)}
@@ -174,7 +174,8 @@ def _validate(key: str, question: Question, raw: Any) -> Answer:
     selected = raw.get("choice")
     options = question.options or {}
     if selected not in options:
-        raise JevError(f"Answer {key} selected {selected!r}, outside the supplied options")
+        raise JevError(f"answer {key} has 'choice' {str(selected)[:40]!r}, which is not one of the "
+                       "options offered", kind="protocol")
     probabilities = raw.get("probabilities") or {}
     clean = {k: float(v) for k, v in probabilities.items()
              if k in options and isinstance(v, (int, float)) and math.isfinite(v)}
@@ -183,10 +184,27 @@ def _validate(key: str, question: Question, raw: Any) -> Answer:
     return Answer("choice", selected, clean, raw.get("confidence"))
 
 
+def connection_test_questions(kinds: tuple[str, ...]) -> dict[str, Question]:
+    """One tiny question per decision type: the connection and compatibility check."""
+    questions: dict[str, Question] = {}
+    if "choice" in kinds:
+        questions["team"] = choice("Which team should handle `ticket`?",
+                                   {"billing": "the billing team", "shipping": "the shipping team"})
+    if "noul" in kinds:
+        questions["refund"] = noul("Does `ticket` ask for money back?")
+    if "score" in kinds:
+        questions["urgency"] = score("How urgent is `ticket`?", ["not urgent", "somewhat urgent", "very urgent"])
+    return questions
+
+
+TEST_STATE = {"ticket": "I was charged twice for my order. Please refund the extra charge."}
+
+
 # ---- connection state (what the app shows; never 'connected' without a real answer) ----
 
 FAILURE_STATES = {"auth": "auth_failed", "credits": "no_credits", "unavailable": "unavailable",
-                  "request": "error", "not_configured": "not_configured", "budget": "budget_reached"}
+                  "request": "error", "not_configured": "not_configured", "budget": "budget_reached",
+                  "protocol": "incompatible", "unsupported": "incompatible"}
 
 
 @dataclass
@@ -205,6 +223,13 @@ def record_state(provider: str, model: str, state: str, message: str = "",
                  snapshot: str | None = None) -> None:
     with _STATES_LOCK:
         _STATES[(provider, model)] = ConnectionState(state, message, snapshot, time.time())
+
+
+def forget_state(provider: str) -> None:
+    """Drop what is known about a provider (its settings changed)."""
+    with _STATES_LOCK:
+        for key in [k for k in _STATES if k[0] == provider]:
+            del _STATES[key]
 
 
 def connection_state(provider: str, model: str) -> ConnectionState | None:
@@ -246,9 +271,8 @@ class JevClient:
                  max_retries: int = 3, cache_dir: str | Path | None = None,
                  max_parallel: int = 8, budget_usd: float | None = None) -> None:
         from intentsql.config import settings
-        from intentsql.providers import PROVIDERS
         cfg = settings()
-        self.provider = PROVIDERS[provider or cfg.provider]
+        self.provider = cfg.providers[provider or cfg.provider]
         same = self.provider.name == cfg.provider
         self.url = url or (cfg.jev_url if same else self.provider.url)
         self.model = model or (cfg.jev_model if same else self.provider.model)
@@ -268,7 +292,8 @@ class JevClient:
 
     @property
     def configured(self) -> bool:
-        return bool(self._api_key) or "127.0.0.1" in self.url or "localhost" in self.url
+        # A custom endpoint may need no key; it says so (HTTP 401) if it does.
+        return bool(self._api_key) or self.provider.custom or "127.0.0.1" in self.url or "localhost" in self.url
 
     def describe(self) -> dict[str, Any]:
         """Provider details safe to show (never the key)."""
@@ -291,6 +316,19 @@ class JevClient:
 
     def _error(self, status: int) -> str:
         name = self.provider.label
+        if self.provider.custom:
+            custom = {
+                401: f"{name} requires an API key, or rejected the one saved.",
+                404: f"{name}: nothing answers at this URL, or the endpoint does not know the model "
+                     f"'{self.model}' (HTTP 404). Check the URL and the model ID.",
+                405: f"{name}: this URL does not accept POST requests (HTTP 405). Is it the decision endpoint?",
+                400: f"{name} rejected IntentSQL's request (HTTP 400). The endpoint may not implement "
+                     "the System One decision protocol.",
+                415: f"{name} does not accept JSON requests (HTTP 415).",
+                422: f"{name} rejected the request format (HTTP 422). The endpoint may not implement "
+                     "the System One decision protocol."}
+            if status in custom:
+                return custom[status]
         return {401: f"{name} rejected the API key. Check the provider settings.",
                 402: f"{name}: the account has no credits left. {self.provider.billing_hint}",
                 403: f"{name} denied access for this key or model.",
@@ -329,13 +367,18 @@ class JevClient:
                         usage.retries += 1
                     time.sleep(0.3 * attempt)
                     continue
-                raise JevError(f"Could not reach {name}. Check the network.", fatal=True,
+                where = f" at {httpx.URL(self.url).host}" if self.provider.custom else ""
+                raise JevError(f"Could not reach {name}{where}. Check the network"
+                               + (" and the URL" if self.provider.custom else "") + ".", fatal=True,
                                kind="unavailable") from exc
             if response.status_code == 200:
                 try:
                     data = response.json()
                 except ValueError as exc:
-                    raise JevError(f"{name} returned invalid JSON.", kind="protocol") from exc
+                    raise JevError(f"{name} answered with something that is not JSON"
+                                   + (" (is this a web page rather than the API endpoint?)"
+                                      if "html" in response.headers.get("content-type", "") else "")
+                                   + ".", kind="protocol") from exc
                 reported = (data.get("usage") or {}) if isinstance(data, dict) else {}
                 cost = _number(reported.get("cost"))
                 if cost is None and self.provider.price_per_mtok is not None:
@@ -360,8 +403,12 @@ class JevClient:
                 continue
             status = response.status_code
             raise JevError(self._error(status) + _detail(response, self._api_key),
-                           fatal=status in FATAL_STATUS or status in RETRYABLE,
-                           kind={401: "auth", 403: "auth", 402: "credits", 404: "request", 422: "request"}.get(
+                           fatal=status in FATAL_STATUS or status in RETRYABLE
+                           or (self.provider.custom and status in (400, 405, 415)),
+                           kind={401: "auth", 403: "auth", 402: "credits", 404: "request", 422: "request",
+                                 400: "protocol" if self.provider.custom else "error",
+                                 415: "protocol" if self.provider.custom else "error",
+                                 405: "request"}.get(
                                status, "unavailable" if status in RETRYABLE else "error"))
 
     # -- public ------------------------------------------------------------------
@@ -373,13 +420,15 @@ class JevClient:
         'connected' only after a successful answer, the actual failure otherwise."""
         if not questions:
             return {}
+        real_before = usage.calls - usage.cached_calls
         try:
             answers = self._ask(state, questions, usage=usage, log=log, purpose=purpose)
         except JevError as exc:
-            if exc.kind in FAILURE_STATES:
+            # One malformed answer from a built-in provider is an error, not a verdict on it.
+            if exc.kind in FAILURE_STATES and (self.provider.custom or exc.kind != "protocol"):
                 record_state(self.provider.name, self.model, FAILURE_STATES[exc.kind], str(exc))
             raise
-        if not all(e.cached for e in (log or [])[-1:]):
+        if usage.calls - usage.cached_calls > real_before:          # a real (uncached) answer
             record_state(self.provider.name, self.model, "connected", "", usage.models[-1] if usage.models else None)
         return answers
 
@@ -389,6 +438,10 @@ class JevClient:
             variables = " or ".join(self.provider.key_variables) or "a key"
             raise JevError(f"No API key is set for {self.provider.label}. Add one in Settings "
                            f"or set {variables}.", fatal=True, kind="not_configured")
+        unsupported = sorted({q.kind for q in questions.values()} - set(self.provider.kinds))
+        if self.provider.custom and unsupported:
+            raise JevError(f"{self.provider.label} is set up without {' and '.join(k.title() for k in unsupported)} "
+                           "questions, which IntentSQL needs here.", fatal=True, kind="unsupported")
         chunks = _chunk(questions, self.max_chars)
         lock = threading.Lock()
         started = time.monotonic()
@@ -399,13 +452,20 @@ class JevClient:
             t0 = time.monotonic()
             data, cached = self._post(body, usage, lock)
             raw_answers = data.get("answers") if isinstance(data, dict) else None
-            if not isinstance(raw_answers, dict):
-                raise JevError(f"{self.provider.label} returned no answers object.", kind="protocol")
-            answers = {}
-            for key, question in chunk.items():
-                if key not in raw_answers:
-                    raise JevError(f"{self.provider.label} omitted answer {key}.")
-                answers[key] = _validate(key, question, raw_answers[key])
+            try:
+                if not isinstance(raw_answers, dict):
+                    shape = (f"top-level fields: {', '.join(list(data)[:5])}" if isinstance(data, dict) and data
+                             else "no JSON object")
+                    raise JevError(f"there is no 'answers' object ({shape})", kind="protocol")
+                answers = {}
+                for key, question in chunk.items():
+                    if key not in raw_answers:
+                        raise JevError(f"the answer to question {key} is missing", kind="protocol")
+                    answers[key] = _validate(key, question, raw_answers[key])
+            except JevError as exc:
+                raise JevError(f"{self.provider.label} answered, but not in the System One decision format: "
+                               f"{exc}." + (" See docs/CUSTOM_MODELS.md for what IntentSQL expects."
+                                            if self.provider.custom else ""), kind="protocol") from None
             reported = data.get("usage") or {}
             exchange = Exchange(purpose, state, body["questions"],
                                 {k: raw_answers[k] for k in chunk},
@@ -496,9 +556,10 @@ class UnselectedClient:
                 "budget_usd": None, "spent_usd": 0.0, "requests": 0}
 
     def ask(self, *args: Any, **kwargs: Any) -> dict[str, Answer]:
-        raise JevError("No model is selected. Choose TypeSafe Jev or Liquid AI d1 (the model button in the "
-                       "app, or `intent-sql keys typesafe|liquid`), or try demo mode "
-                       "(`intent-sql keys demo`).", fatal=True, kind="not_configured")
+        raise JevError("No model is selected. Choose TypeSafe Jev, Liquid AI d1 or your own custom model "
+                       "(the model button in the app, or `intent-sql keys typesafe|liquid` / "
+                       "`intent-sql custom add`), or try demo mode (`intent-sql keys demo`).",
+                       fatal=True, kind="not_configured")
 
 
 def shared_client() -> Any:

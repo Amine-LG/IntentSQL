@@ -2,7 +2,9 @@
 
 Recognized variables (all optional):
 
-``INTENTSQL_PROVIDER``                            ``typesafe``, ``liquid`` or ``demo``; locks the choice
+``INTENTSQL_PROVIDER``                            ``typesafe``, ``liquid``, ``demo`` or ``custom:<id>``
+                                                  (a custom model saved in the app or with
+                                                  ``intent-sql custom add``); locks the choice
                                                   (otherwise it is made in the app).
 ``SYSTEM_ONE_API_KEY`` (or ``TYPESAFE_API_KEY``)  Key for TypeSafe Jev.
 ``LIQUID_API_KEY``                                Key for Liquid AI d1.
@@ -27,6 +29,7 @@ import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_DIR.parent          # the source checkout (benchmarks, .env); absent when installed
@@ -70,6 +73,7 @@ class Settings:
     keys_present: tuple[str, ...] = ()  # providers that have a key (names only)
     locked_by_environment: bool = False # INTENTSQL_PROVIDER is set: the app cannot change it
     notice: str = ""                    # e.g. a saved provider that is no longer supported
+    providers: Any = None               # name -> Provider: built-in, then the user's custom models
 
     def key_for(self, name: str) -> str:
         return _keys(self.workspace).get(name, "")
@@ -98,8 +102,23 @@ def _saved(workspace: Path) -> dict:
         return {}
 
 
+def _custom(saved: dict) -> dict[str, Any]:
+    """The user's custom models (name -> Provider), from the saved settings."""
+    from intentsql.providers import CUSTOM_PREFIX, custom_provider
+    raw = saved.get("custom")
+    entries = raw if isinstance(raw, dict) else {}
+    return {CUSTOM_PREFIX + slug: custom_provider(slug, entry)
+            for slug, entry in entries.items() if isinstance(entry, dict)}
+
+
+def all_providers() -> dict[str, Any]:
+    """Built-in providers and the user's custom models."""
+    return settings().providers
+
+
 def _keys(workspace: Path) -> dict[str, str]:
-    """Each provider's key: environment, then saved settings, then config files."""
+    """Each provider's key: environment, then saved settings, then config files.
+    Custom models' keys come from the saved settings only."""
     from intentsql.providers import PROVIDERS
     files = _file_values()
     saved = _saved(workspace)
@@ -114,6 +133,9 @@ def _keys(workspace: Path) -> dict[str, str]:
         value = value or next((files[v] for v in info.key_variables if files.get(v)), "")
         if value:
             keys[name] = value
+    for name in _custom(saved):
+        if isinstance(saved_keys.get(name), str) and saved_keys[name]:
+            keys[name] = saved_keys[name]
     return keys
 
 
@@ -128,19 +150,22 @@ def settings() -> Settings:
     workspace = Path(get("INTENTSQL_WORKSPACE") or _default_workspace()).expanduser()
     saved = _saved(workspace)
     keys = _keys(workspace)
+    providers = {**PROVIDERS, **_custom(saved)}
     environment = (os.environ.get("INTENTSQL_PROVIDER") or "").strip().lower()
     requested = (environment or str(saved.get("provider") or "") or files.get("INTENTSQL_PROVIDER")
                  or "auto").strip().lower()
     requested = ALIASES.get(requested, requested)
     notice = ""
-    if requested != "auto" and requested not in PROVIDERS:
-        notice = f"The provider '{requested}' is not supported in this version; choose another model."
+    if requested != "auto" and requested not in providers:
+        notice = (f"The custom model '{requested[7:]}' no longer exists; choose another model."
+                  if requested.startswith("custom:") else
+                  f"The provider '{requested}' is not supported in this version; choose another model.")
         requested = "auto"
     if requested == "auto":
         name = next((n for n in AUTO_ORDER if keys.get(n)), "")
     else:
         name = requested
-    info = PROVIDERS.get(name)
+    info = providers.get(name)
     url = model = ""
     if info is not None:
         # Advanced overrides from the environment only; the app stores a model per provider.
@@ -156,6 +181,6 @@ def settings() -> Settings:
         jev_model=model or (info.model if info else ""),
         jev_cache_dir=get("INTENTSQL_JEV_CACHE") or None, workspace=workspace,
         budget_usd=float(budget) if budget else None,
-        keys_present=tuple(n for n in PROVIDERS if keys.get(n)),
-        locked_by_environment=bool(environment), notice=notice,
+        keys_present=tuple(n for n in providers if keys.get(n)),
+        locked_by_environment=bool(environment), notice=notice, providers=providers,
     )

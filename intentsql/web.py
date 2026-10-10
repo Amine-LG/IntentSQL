@@ -26,9 +26,18 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from intentsql import __version__
 from intentsql.config import PACKAGE_DIR, settings
 from intentsql.examples import examples
-from intentsql.jev import JevError, Usage, connection_state, noul, reset_shared_client, shared_client
+from intentsql.jev import (
+    TEST_STATE,
+    JevClient,
+    JevError,
+    Usage,
+    connection_state,
+    connection_test_questions,
+    reset_shared_client,
+    shared_client,
+)
 from intentsql.pipeline import answer
-from intentsql.providers import PROVIDERS
+from intentsql.providers import CUSTOM_PREFIX, missing_kinds
 from intentsql.schema import load_schema, quote_identifier
 from intentsql.workspace import (
     WorkspaceError,
@@ -36,8 +45,10 @@ from intentsql.workspace import (
     import_bytes,
     import_path,
     list_databases,
+    remove_custom_model,
     resolve_database,
     save_connection,
+    save_custom_model,
 )
 
 log = logging.getLogger("intentsql.web")
@@ -100,7 +111,7 @@ def health() -> dict[str, Any]:
 # ---- connection ---------------------------------------------------------------------
 
 class ConnectionInput(BaseModel):
-    provider: str | None = Field(default=None, max_length=40)
+    provider: str | None = Field(default=None, max_length=60)
     model: str | None = Field(default=None, max_length=100)
     api_key: str | None = Field(default=None, max_length=500)
     clear_key: bool = False
@@ -110,18 +121,27 @@ STATE_TEXT = {
     "not_configured": "Not configured", "untested": "Ready to test", "connected": "Connected",
     "auth_failed": "Key rejected", "no_credits": "No credits", "unavailable": "Unavailable",
     "budget_reached": "Spending limit reached", "error": "Error", "demo": "Demo mode",
+    "incompatible": "Incompatible",
 }
 
 
-def _state(name: str, model: str, has_key: bool) -> dict[str, Any]:
+def _state(info: Any, model: str, has_key: bool) -> dict[str, Any]:
     """A provider's real status: never 'connected' without a successful answer."""
+    name = info.name
     if name == "demo":
         return {"state": "demo", "message": "Fixed default decisions: no model reads your question."}
-    if not has_key:
+    missing = missing_kinds(info)
+    if missing:
+        return {"state": "incompatible",
+                "message": f"IntentSQL asks {' and '.join(k.title() for k in missing)} questions, which "
+                           "this model is set up without."}
+    if not has_key and not info.custom:
         return {"state": "not_configured", "message": "Add an API key to use this model."}
     known = connection_state(name, model)
     if known is None:
-        return {"state": "untested", "message": "A key is saved. Test the connection to check it."}
+        return {"state": "untested", "message": "Saved. Test the connection to check that it answers in "
+                "the format IntentSQL needs." if info.custom else
+                "A key is saved. Test the connection to check it."}
     return {"state": known.state, "message": known.message, "model_snapshot": known.model_snapshot,
             "checked_at": round(known.checked_at)}
 
@@ -131,15 +151,19 @@ def get_connection() -> dict[str, Any]:
     """Every supported provider and the active one, with real states -- never a key."""
     cfg = settings()
     providers = []
-    for p in PROVIDERS.values():
+    for p in cfg.providers.values():
         has_key = p.name in cfg.keys_present
         model = cfg.jev_model if p.name == cfg.provider else _saved_model(p.name)
-        state = _state(p.name, model, has_key)
-        providers.append({
+        state = _state(p, model, has_key)
+        entry = {
             "name": p.name, "label": p.label, "model_label": p.model_label, "model": model,
-            "models": list(p.models), "needs_key": not p.offline, "has_key": has_key,
-            "key_help": p.key_help, "docs": p.docs, **state,
-            "state_text": STATE_TEXT.get(state["state"], state["state"])})
+            "models": list(p.models), "needs_key": not p.offline and not p.custom, "has_key": has_key,
+            "key_help": p.key_help, "docs": p.docs, "custom": p.custom, **state,
+            "state_text": STATE_TEXT.get(state["state"], state["state"])}
+        if p.custom:
+            entry.update({"id": p.name.removeprefix(CUSTOM_PREFIX), "url": p.url, "kinds": list(p.kinds),
+                          "max_chars": p.max_chars_per_request})
+        providers.append(entry)
     active = next((p for p in providers if p["name"] == cfg.provider), None)
     return {"active": active, "provider": cfg.provider, "locked_by_environment": cfg.locked_by_environment,
             "notice": cfg.notice, "providers": providers}
@@ -147,9 +171,10 @@ def get_connection() -> dict[str, Any]:
 
 def _saved_model(name: str) -> str:
     from intentsql.workspace import saved_connection
+    info = settings().providers[name]
     models = saved_connection().get("models")
     model = models.get(name) if isinstance(models, dict) else None
-    return model if model in PROVIDERS[name].models else PROVIDERS[name].model
+    return str(model if model in info.models else info.model)
 
 
 @app.post("/api/connection")
@@ -167,20 +192,73 @@ def set_connection(body: ConnectionInput) -> dict[str, Any]:
     return get_connection()
 
 
+class TestInput(BaseModel):
+    provider: str | None = Field(default=None, max_length=60)
+
+
 @app.post("/api/connection/test")
-def test_connection() -> dict[str, Any]:
-    """One tiny decision (a single yes/no question) with the active provider."""
-    client = shared_client()
-    if client.provider.offline:
+def test_connection(body: TestInput | None = None) -> dict[str, Any]:
+    """One tiny question per decision type the provider supports (one request), with the
+    active provider or the one named. A pass means the answers came back in the right format;
+    it says nothing about how well the model decides."""
+    cfg = settings()
+    name = (body.provider if body and body.provider else None) or cfg.provider
+    if name not in cfg.providers:
+        raise HTTPException(404, "Unknown provider")
+    if cfg.providers[name].offline:
         return {**get_connection(), "ok": True}
+    client = shared_client() if name == cfg.provider else JevClient(provider=name, model=_saved_model(name))
     usage = Usage()
     try:
-        answer_ = client.ask({"note": "This is a connection test."},
-                             {"ok": noul("Is `note` a connection test?")}, usage=usage)
-        ok = answer_["ok"].p is not None
+        client.ask(TEST_STATE, connection_test_questions(client.provider.kinds), usage=usage)
     except JevError as exc:
         return {**get_connection(), "ok": False, "error": str(exc)}
-    return {**get_connection(), "ok": ok, "usage": usage.as_dict()}
+    finally:
+        if client is not shared_client():
+            client.close()
+    return {**get_connection(), "ok": True, "tested": list(client.provider.kinds), "usage": usage.as_dict()}
+
+
+class CustomModelInput(BaseModel):
+    id: str | None = Field(default=None, max_length=40)       # None: add a new one
+    label: str = Field(max_length=60)
+    url: str = Field(max_length=400)
+    model: str = Field(max_length=120)
+    kinds: list[str] = Field(default_factory=lambda: ["choice", "noul"], max_length=3)
+    max_chars: int | None = None
+    api_key: str | None = Field(default=None, max_length=600)
+    clear_key: bool = False
+    select: bool = False
+
+
+@app.post("/api/custom-models")
+def save_custom(body: CustomModelInput) -> dict[str, Any]:
+    """Add or edit a custom decision model. The key, if any, is stored server-side only."""
+    cfg = settings()
+    if body.select and cfg.locked_by_environment and (not body.id or CUSTOM_PREFIX + body.id != cfg.provider):
+        raise HTTPException(409, "The model is set by the INTENTSQL_PROVIDER environment variable "
+                                 "and cannot be changed here.")
+    try:
+        name = save_custom_model(slug=body.id, label=body.label, url=body.url, model=body.model,
+                                 kinds=body.kinds, max_chars=body.max_chars, api_key=body.api_key,
+                                 clear_key=body.clear_key, select=body.select)
+    except WorkspaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    reset_shared_client()
+    return {**get_connection(), "saved": name}
+
+
+@app.delete("/api/custom-models/{model_id}")
+def delete_custom(model_id: str) -> dict[str, Any]:
+    cfg = settings()
+    if cfg.locked_by_environment and cfg.provider == CUSTOM_PREFIX + model_id:
+        raise HTTPException(409, "This model is selected by the INTENTSQL_PROVIDER environment variable.")
+    try:
+        remove_custom_model(model_id)
+    except WorkspaceError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    reset_shared_client()
+    return get_connection()
 
 
 # ---- databases ------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Release evaluation, in protocol order (docs/EVALUATION.md), for ONE provider.
 #
-#   scripts/release_eval.sh liquid                # or typesafe
+#   scripts/release_eval.sh liquid                # or typesafe, or custom:<id>
 #   STEPS="check smoke" scripts/release_eval.sh liquid
 #
 # Every report goes to ../IntentSQL-artifacts/v1-runs/<provider>/ and records the provider,
@@ -10,10 +10,10 @@
 # Cost guard: INTENTSQL_BUDGET_USD (default 3) stops requests once reported spend reaches it.
 set -euo pipefail
 
-provider="${1:?usage: release_eval.sh <typesafe|liquid>}"
+provider="${1:?usage: release_eval.sh <typesafe|liquid|custom:ID>}"
 steps="${STEPS:-check smoke dev-suites train dev holdout test}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
-out="$root/../IntentSQL-artifacts/v1-runs/$provider"
+out="$root/../IntentSQL-artifacts/v1-runs/${provider//:/-}"
 mkdir -p "$out"
 export INTENTSQL_PROVIDER="$provider" INTENTSQL_BUDGET_USD="${INTENTSQL_BUDGET_USD:-3}"
 run() { "$root/.venv/bin/intent-sql" "$@"; }

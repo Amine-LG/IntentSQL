@@ -73,7 +73,7 @@ const developer = () => Boolean(store("intentsql.developer"));
 
 // ---------------------------------------------------------------- model (provider) setup
 const STATE_TONE = { connected: "ok", demo: "demo", untested: "idle", not_configured: "idle",
-  auth_failed: "bad", no_credits: "bad", unavailable: "warn", budget_reached: "warn", error: "bad" };
+  auth_failed: "bad", no_credits: "bad", unavailable: "warn", budget_reached: "warn", error: "bad", incompatible: "bad" };
 const PROVIDER_BLURB = {
   typesafe: "TypeSafe's Jev, the model IntentSQL was developed and benchmarked with.",
   liquid: "Liquid AI's d1, a decision model with the same question types.",
@@ -106,6 +106,7 @@ function renderModelChip(conn) {
   }
   dot.className = `state-dot ${STATE_TONE[active.state] || "idle"}`;
   $("#model-name").replaceChildren(...(active.name === "demo" ? ["Demo", el("span", { class: "hide-narrow", text: " mode" })]
+    : active.custom ? [active.label, el("span", { class: "hide-narrow", text: " · custom" })]
     : [active.model_label, el("span", { class: "hide-narrow", text: ` · ${active.label}` })]));
   $("#model-state").textContent = active.name === "demo" ? "" : active.state_text;
   $("#model-chip").title = `${active.label} ${active.model_label}: ${active.state_text}${active.message ? ` — ${active.message}` : ""}`;
@@ -115,6 +116,7 @@ function openModelDialog() {
   state.modelChoice = state.connection?.provider || "typesafe";
   renderModelDialog();
   $("#model-dialog").showModal();
+  $(".model-dialog .provider-card.selected")?.focus();      // not the first card's focus ring
 }
 
 function renderModelDialog() {
@@ -125,28 +127,39 @@ function renderModelDialog() {
     ? "The model is set by the INTENTSQL_PROVIDER environment variable, so it cannot be changed here." : "";
   $("#model-notice").hidden = !conn.notice;
   $("#model-notice").textContent = conn.notice || "";
-  const cards = $("#provider-cards");
-  cards.replaceChildren(...conn.providers.map((p) => {
+  const card = (p) => {
     const selected = p.name === state.modelChoice;
     const active = p.name === conn.provider;
     return el("button", {
       type: "button", role: "radio", "aria-checked": String(selected), class: `provider-card${selected ? " selected" : ""}`,
-      onclick: () => { state.modelChoice = p.name; renderModelDialog(); },
+      onclick: () => { state.modelChoice = p.name; state.confirmDelete = false; renderModelDialog(); },
     },
-    el("span", { class: "provider-name" }, p.name === "demo" ? "Demo mode" : `${p.model_label}`,
-      p.name === "demo" ? null : el("span", { class: "provider-by", text: ` by ${p.label}` })),
-    el("span", { class: "provider-blurb", text: PROVIDER_BLURB[p.name] || "" }),
+    el("span", { class: "provider-name" }, p.custom ? p.label : p.name === "demo" ? "Demo mode" : `${p.model_label}`,
+      p.custom || p.name === "demo" ? null : el("span", { class: "provider-by", text: ` by ${p.label}` })),
+    el("span", { class: "provider-blurb", text: p.custom ? `${p.model} · ${hostOf(p.url)}` : PROVIDER_BLURB[p.name] || "" }),
     el("span", { class: `badge-state ${STATE_TONE[p.state] || "idle"}` }, el("span", { class: "state-dot" }),
       p.state_text, active ? " · in use" : ""));
-  }));
+  };
+  const builtIn = conn.providers.filter((p) => !p.custom);
+  const custom = conn.providers.filter((p) => p.custom);
+  const adding = state.modelChoice === "new";
+  $("#provider-cards").replaceChildren(...builtIn.map(card));
+  $("#custom-cards").replaceChildren(...custom.map(card),
+    el("button", { type: "button", role: "radio", "aria-checked": String(adding), class: `provider-card add-card${adding ? " selected" : ""}`,
+      onclick: () => { state.modelChoice = "new"; renderModelDialog(); } },
+    el("span", { class: "provider-name", text: "+ Custom model" }),
+    el("span", { class: "provider-blurb", text: "Connect your own endpoint that speaks the System One decision protocol." })));
   renderProviderDetail();
 }
+
+function hostOf(url) { try { return new URL(url).host; } catch { return url; } }
 
 function renderProviderDetail() {
   const conn = state.connection;
   const p = conn.providers.find((x) => x.name === state.modelChoice);
   const box = $("#provider-detail");
   box.replaceChildren();
+  if (state.modelChoice === "new" || p?.custom) { renderCustomDetail(box, p || null); return; }
   if (!p) return;
   const active = p.name === conn.provider;
   const status = el("p", { class: `provider-status ${STATE_TONE[p.state] || "idle"}`, role: "status" },
@@ -183,17 +196,8 @@ function renderProviderDetail() {
       finally { use.disabled = false; use.textContent = useLabel; }
     } });
   actions.append(use);
-  if (active && p.needs_key && p.has_key) {
-    const test = el("button", { type: "button", class: "button", text: "Test connection",
-      onclick: async () => {
-        busy(test, "Testing…");
-        try {
-          const out = await api("/api/connection/test", { method: "POST" });
-          state.connection = out; renderModelChip(out); renderModelDialog();
-          toast(out.ok ? "Connected" : "Connection failed");
-        } catch (err) { toast(err.message); renderProviderDetail(); }
-      } });
-    actions.append(test);
+  if (p.needs_key && p.has_key) {
+    actions.append(testButton(p));
     actions.append(el("button", { type: "button", class: "button ghost danger", text: "Remove key",
       onclick: async () => {
         state.connection = await api("/api/connection", { method: "POST", body: JSON.stringify({ provider: p.name, clear_key: true }) });
@@ -201,10 +205,116 @@ function renderProviderDetail() {
       } }));
   }
   box.append(actions);
-  if (p.needs_key && !p.has_key) box.append(el("p", { class: "muted small", text: "After saving, use Test connection: IntentSQL sends one tiny yes/no question (a fraction of a cent)." }));
+  if (p.needs_key && !p.has_key) box.append(el("p", { class: "muted small", text: "After saving, use Test connection: IntentSQL sends two tiny questions, one Choice and one Noul (a fraction of a cent)." }));
+}
+
+function testButton(p) {
+  const test = el("button", { type: "button", class: "button", text: "Test connection",
+    onclick: async () => {
+      test.disabled = true; test.textContent = "Testing…";
+      try {
+        const out = await api("/api/connection/test", { method: "POST", body: JSON.stringify({ provider: p.name }) });
+        state.connection = out; renderModelChip(out); renderModelDialog();
+        toast(out.ok ? `${p.custom ? p.label : p.model_label}: connected` : "Connection failed");
+      } catch (err) { toast(err.message); renderProviderDetail(); }
+    } });
+  return test;
+}
+
+function renderCustomDetail(box, p) {
+  const conn = state.connection;
+  const locked = conn.locked_by_environment;
+  if (p) {
+    box.append(el("p", { class: `provider-status ${STATE_TONE[p.state] || "idle"}`, role: "status" },
+      el("strong", { text: p.state_text }), p.message ? ` — ${p.message}` : ""));
+  }
+  box.append(el("p", { class: "custom-note" },
+    el("span", { class: "chip custom-chip", text: "Custom" }),
+    " Not verified by IntentSQL. The endpoint must implement the System One decision protocol; a chat API (such as an OpenAI-style /chat/completions URL) will not work. ",
+    "Test connection checks that answers come back in the right format, not how good the model is."));
+  const field = (label, input, hint) => el("label", { class: "field" }, label, input, hint ? el("span", { class: "muted small", text: hint }) : null);
+  const name = el("input", { id: "custom-label", type: "text", value: p?.label || "", maxlength: "40", placeholder: "My decision model", autocomplete: "off" });
+  const url = el("input", { id: "custom-url", type: "url", value: p?.url || "", placeholder: "https://example.com/v1/systemone", autocomplete: "off", spellcheck: "false" });
+  const model = el("input", { id: "custom-model", type: "text", value: p?.model || "", placeholder: "model-id", autocomplete: "off", spellcheck: "false" });
+  const key = el("input", { id: "custom-key", type: "password", autocomplete: "off", spellcheck: "false",
+    placeholder: p?.has_key ? "A key is saved (leave blank to keep it)" : "Optional: leave empty if the endpoint needs none" });
+  box.append(field("Name", name), field("Endpoint URL", url, "https:// (plain http:// only for localhost)."), field("Model ID", model),
+    field("API key", key, "Stored on this computer only; sent only to this endpoint, and dropped if you change the endpoint's host."));
+  const kinds = new Set(p?.kinds || ["choice", "noul"]);
+  const kind = (k, label, hint) => el("label", { class: "check" },
+    el("input", { type: "checkbox", value: k, class: "custom-kind", checked: kinds.has(k) }), el("span", {}, el("strong", { text: label }), ` — ${hint}`));
+  const maxChars = el("input", { id: "custom-max", type: "number", min: "2000", max: "1000000", step: "1000", value: String(p?.max_chars || 60000) });
+  box.append(el("details", { class: "advanced" }, el("summary", { text: "Advanced" }),
+    el("p", { class: "muted small", text: "Decision types the endpoint supports. IntentSQL asks Choice and Noul questions; Test connection sends one of each type you tick." }),
+    kind("choice", "Choice", "pick one of several options (required)"),
+    kind("noul", "Noul", "a yes/no probability (required)"),
+    kind("score", "Score", "a level on a scale (optional; not used by IntentSQL yet)"),
+    field("Largest request (characters)", maxChars, "Questions are split into several requests above this size.")));
+  box.append(el("details", { class: "protocol" }, el("summary", { text: "What must the endpoint do?" }),
+    el("p", { class: "small", text: "Accept a POST with JSON {model, state, questions} and reply with {answers}: one entry per question key." }),
+    el("pre", { class: "protocol-sample" }, el("code", { text:
+`request:  {"model": "model-id", "state": {...},
+           "questions": {"team": {"type": "choice", "instructions": "...",
+                                  "criteria": {"billing": "...", "shipping": "..."}},
+                         "refund": {"type": "noul", "instructions": "..."}}}
+response: {"answers": {"team": {"choice": "billing",
+                                "probabilities": {"billing": 0.9, "shipping": 0.1}},
+                       "refund": {"noul": 0.85}}}` })),
+    el("p", { class: "muted small", text: "With an API key, requests carry Authorization: Bearer <key>. Full details: docs/CUSTOM_MODELS.md." })));
+  const actions = el("div", { class: "detail-actions" });
+  const error = el("p", { class: "provider-status bad", hidden: true, role: "alert" });
+  const active = p && p.name === conn.provider;
+  const save = async (select, button, label) => {
+    button.disabled = true; button.textContent = "Saving…"; error.hidden = true;
+    try {
+      const body = { id: p?.id || null, label: name.value.trim(), url: url.value.trim(), model: model.value.trim(),
+        kinds: $$(".custom-kind").filter((c) => c.checked).map((c) => c.value), max_chars: Number(maxChars.value) || null, select };
+      if (key.value.trim()) body.api_key = key.value.trim();
+      const out = await api("/api/custom-models", { method: "POST", body: JSON.stringify(body) });
+      state.connection = out; state.modelChoice = out.saved;
+      renderModelChip(out); renderModelDialog();
+      $("#welcome").hidden = Boolean(out.active);
+      toast(select ? `${body.label} selected — test the connection next` : `${body.label} saved`);
+    } catch (err) { error.textContent = err.message; error.hidden = false; button.disabled = false; button.textContent = label; }
+  };
+  const useLabel = active ? "Save" : "Save and use";
+  const use = el("button", { type: "button", class: "button primary", text: useLabel, disabled: locked && !active,
+    onclick: () => save(true, use, useLabel) });
+  actions.append(use);
+  if (!active) {
+    const only = el("button", { type: "button", class: "button", text: "Save only", onclick: () => save(false, only, "Save only") });
+    actions.append(only);
+  }
+  if (p) {
+    actions.append(testButton(p));
+    if (p.has_key) actions.append(el("button", { type: "button", class: "button ghost danger", text: "Remove key",
+      onclick: async () => {
+        try {
+          const out = await api("/api/custom-models", { method: "POST", body: JSON.stringify({ id: p.id, label: p.label,
+            url: p.url, model: p.model, kinds: p.kinds, max_chars: p.max_chars, clear_key: true }) });
+          state.connection = out; renderModelChip(out); renderModelDialog(); toast("Key removed");
+        } catch (err) { error.textContent = err.message; error.hidden = false; }
+      } }));
+    const del = el("button", { type: "button", class: "button ghost danger", text: state.confirmDelete ? "Click again to delete" : "Delete model",
+      disabled: locked && active,
+      onclick: async () => {
+        if (!state.confirmDelete) { state.confirmDelete = true; del.textContent = "Click again to delete"; return; }
+        state.confirmDelete = false;
+        try {
+          const out = await api(`/api/custom-models/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+          state.connection = out; state.modelChoice = out.provider || "typesafe";
+          renderModelChip(out); renderModelDialog(); $("#welcome").hidden = Boolean(out.active);
+          toast(`${p.label} deleted`);
+        } catch (err) { error.textContent = err.message; error.hidden = false; }
+      } });
+    actions.append(del);
+  }
+  box.append(error, actions);
 }
 
 $("#model-chip").addEventListener("click", openModelDialog);
+// Enter in a field must not submit the dialog's form (which would close it).
+$("#provider-detail").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
 $("#welcome-setup").addEventListener("click", openModelDialog);
 $("#welcome-demo").addEventListener("click", async () => {
   try {
@@ -430,7 +540,8 @@ function showAnswer(result) {
   if (result.provider === "demo" && result.sql) [tone, label] = ["warn", "Demo answer"];
   const pill = $("#confidence");
   pill.className = `pill ${tone}`; pill.textContent = label;
-  pill.title = result.confidence !== null && result.confidence !== undefined
+  pill.title = result.provider === "demo" ? "Demo mode: no model was asked; the choices are fixed defaults"
+    : result.confidence !== null && result.confidence !== undefined
     ? `In testing, about ${Math.round(result.confidence * 100)}% of answers with this level of confidence were correct`
     : result.verification !== null && result.verification !== undefined
       ? `Verification score ${Math.round(result.verification * 100)}% (confidence is not calibrated for this provider yet)` : "";
@@ -591,7 +702,10 @@ function renderInspector() {
   if (section.hidden) return;
   const u = result.usage || {};
   const t = result.timings_ms || {};
-  $("#inspector-meta").textContent = [t.total !== undefined ? `${t.total} ms` : "", u.calls ? plural(u.calls, "model call") : ""].filter(Boolean).join(" · ");
+  const source = (state.connection?.providers || []).find((p) => p.name === result.provider);
+  const by = result.provider === "demo" ? "demo mode" : source ? (source.custom ? `${source.label} (custom)` : `${source.model_label} by ${source.label}`) : result.provider;
+  $("#inspector-meta").textContent = [t.total !== undefined ? `${t.total} ms` : "",
+    result.provider === "demo" ? "no model called (demo mode)" : u.calls ? `${plural(u.calls, "model call")}${by ? ` to ${by}` : ""}` : ""].filter(Boolean).join(" · ");
   const stages = stagesOf(result);
   $("#stages").replaceChildren(...stages.map((stage, i) => el("li", {},
     el("button", { type: "button", role: "tab", "aria-selected": String(state.stage === stage.id), class: "stage",
@@ -636,7 +750,7 @@ function panelFound(panel, result) {
   panel.append(el("p", { class: "muted small", text: `${g.schema_tables || "All"} tables were available to choose from.` }));
 }
 
-function decisionCard(d) {
+function decisionCard(d, demo = false) {
   const probs = d.probabilities || null;
   const options = d.options || {};
   let chosenKey = null; let chosenP = Number(d.probability) || 0;
@@ -652,11 +766,15 @@ function decisionCard(d) {
   const card = el("li", { class: "decision-card" },
     el("div", { class: "decision-top" },
       el("span", { class: "decision-kind", text: PURPOSE[d.purpose] || d.purpose }),
-      el("span", { class: "decision-p", text: `${Math.round((isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP) * 100)}%` })),
+      el("span", { class: "decision-p", text: demo ? "fixed default" : `${Math.round((isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP) * 100)}%` })),
     el("p", { class: "decision-q" }, marked(question)),
     d.context ? el("p", { class: "decision-context" }, "“", ...marked(d.context), "”") : null,
-    el("div", { class: "decision-choice" }, el("span", { class: "chosen", text: chosenText }), bar(isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP, "chosen-bar")));
-  if (others.length && others.some(([, p]) => p > 0.005)) {
+    el("div", { class: "decision-choice" }, el("span", { class: "chosen", text: chosenText }), demo ? null : bar(isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP, "chosen-bar")));
+  if (demo && others.length) {
+    const rest = Object.keys(probs).filter((k) => k !== chosenKey);
+    card.append(el("details", { class: "others" }, el("summary", { text: rest.length > 6 ? `6 of ${rest.length} other options` : `Other options (${rest.length})` }),
+      el("ul", {}, rest.slice(0, 6).map((k) => el("li", {}, el("span", { class: "other-text", text: options[k] || k }))))));
+  } else if (others.length && others.some(([, p]) => p > 0.005)) {
     card.append(el("details", { class: "others" }, el("summary", { text: Object.keys(probs).length - 1 > others.length ? `Top ${others.length} of ${Object.keys(probs).length - 1} other options` : `Other options (${others.length})` }),
       el("ul", {}, others.map(([k, p]) => el("li", {}, el("span", { class: "other-text", text: options[k] || k }), bar(p), el("span", { class: "other-p", text: `${Math.round(p * 100)}%` }))))));
   }
@@ -665,15 +783,16 @@ function decisionCard(d) {
 
 function panelDecided(panel, result) {
   const decisions = decisionsOf(result);
-  panel.append(note("The model chose among options that IntentSQL built from your database. Percentages are the model's probability for each choice — not the chance that the whole answer is right."));
+  panel.append(note(result.provider === "demo"
+    ? "Demo mode: no model is asked, so each decision takes a fixed default option. With a model, each card shows the model's probability for its choice."
+    : "The model chose among options that IntentSQL built from your database. Percentages are the model's probability for each choice — not the chance that the whole answer is right."));
   if (!decisions.length) { panel.append(el("p", { class: "muted small", text: "No decisions were recorded for this answer." })); return; }
   const groups = { understand: [], values: [], structure: [] };
   for (const d of decisions) groups[STAGE_OF[d.purpose] || "structure"].push(d);
   for (const [id, list] of Object.entries(groups)) {
     if (!list.length) continue;
-    panel.append(el("h4", { text: GROUP_TITLE[id] }), el("ol", { class: "decision-list" }, list.map(decisionCard)));
+    panel.append(el("h4", { text: GROUP_TITLE[id] }), el("ol", { class: "decision-list" }, list.map((d) => decisionCard(d, result.provider === "demo"))));
   }
-  if (result.provider === "demo") panel.append(el("p", { class: "panel-note warn", text: "Demo mode: these are fixed defaults, not a model's reading of your question." }));
 }
 
 function planTables(plan) {
@@ -737,16 +856,18 @@ function panelPlanned(panel, result) {
 
 function panelChecked(panel, result) {
   panel.append(note("Before showing the answer, IntentSQL asks the model whether the plain-English reading matches your question, and compares it with other readings that would return different data."));
-  if (result.provider === "demo") {
-    panel.append(el("p", { class: "panel-note warn", text: "Demo mode: no model checked this answer. The values below are fixed defaults, not evidence." }));
+  const demo = result.provider === "demo";
+  if (demo) {
+    panel.append(el("p", { class: "panel-note warn", text: "Demo mode: no model checked this answer, so there is no check score." }));
   }
-  if (result.verification === null || result.verification === undefined) {
-    panel.append(el("p", { class: "muted small", text: "No check was run for this answer." })); return;
+  if (demo || result.verification === null || result.verification === undefined) {
+    if (!demo) panel.append(el("p", { class: "muted small", text: "No check was run for this answer." }));
+    return;
   }
   panel.append(el("div", { class: "check-row" }, el("span", { text: "Reading matches the question" }), bar(result.verification), el("strong", { text: `${Math.round(result.verification * 100)}%` })));
   if (result.confidence !== null && result.confidence !== undefined) {
     panel.append(el("p", { class: "small", text: `Overall: in testing with this model, about ${Math.round(result.confidence * 100)}% of answers with this level of evidence were correct.` }));
-  } else if (result.provider !== "demo") {
+  } else {
     panel.append(el("p", { class: "muted small", text: "No calibrated overall confidence for this model yet; the check score above is the model's own." }));
   }
   const pick = (result.decisions || []).find((d) => d.key === "pick");

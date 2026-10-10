@@ -1,8 +1,10 @@
 """Decision-model providers: where IntentSQL sends its bounded questions.
 
-Both supported providers speak the same System One protocol: a request with
-``state`` and typed ``questions`` (choice / score / noul), a response with
-``answers`` keyed by question.  They differ in endpoint, model identifiers and key.
+The built-in providers speak the System One protocol: a request with ``state`` and
+typed ``questions`` (choice / score / noul), a response with ``answers`` keyed by
+question.  They differ in endpoint, model identifiers and key.  Users can add their
+own endpoints for the same protocol ("custom models", stored in the workspace
+settings); those are never assumed to work until a test answers correctly.
 
 Selection is explicit and visible.  A provider is chosen in the app's settings,
 by ``INTENTSQL_PROVIDER`` (which then locks the choice), or, when nothing is chosen,
@@ -32,6 +34,8 @@ class Provider:
     price_per_mtok: float | None = None
     billing_hint: str = ""
     docs: str = ""
+    custom: bool = False         # configured by the user, not verified by IntentSQL
+    kinds: tuple[str, ...] = ("choice", "noul")   # decision types the endpoint supports
 
     @property
     def offline(self) -> bool:
@@ -62,6 +66,27 @@ PROVIDERS: dict[str, Provider] = {
 }
 AUTO_ORDER = ("typesafe", "liquid")
 ALIASES = {"mock": "demo"}       # earlier name of the demo provider
+
+KINDS = ("choice", "noul", "score")
+REQUIRED_KINDS = ("choice", "noul")   # what IntentSQL asks; Score is not used yet
+CUSTOM_PREFIX = "custom:"
+CUSTOM_MAX_CHARS = 60_000
+
+
+def custom_provider(slug: str, entry: dict) -> Provider:
+    """A user-configured endpoint, from its saved settings entry."""
+    model = str(entry.get("model") or "")
+    kinds = tuple(k for k in KINDS if k in (entry.get("kinds") or REQUIRED_KINDS))
+    max_chars = entry.get("max_chars")
+    return Provider(
+        CUSTOM_PREFIX + slug, str(entry.get("label") or slug), model, str(entry.get("url") or ""),
+        (model,), (), max_chars_per_request=max_chars if isinstance(max_chars, int) else CUSTOM_MAX_CHARS,
+        custom=True, kinds=kinds)
+
+
+def missing_kinds(info: Provider) -> list[str]:
+    """Decision types IntentSQL needs that this provider does not declare."""
+    return [k for k in REQUIRED_KINDS if k not in info.kinds]
 
 
 def provider(name: str) -> Provider:

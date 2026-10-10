@@ -79,8 +79,9 @@ jobs:
           docker run -d --name intentsql -p 127.0.0.1:7862:7862 -e INTENTSQL_PROVIDER=demo intentsql:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7862/api/health && break; sleep 1; done
           curl -fsS -X POST http://127.0.0.1:7862/api/ask -H "Content-Type: application/json" \
-            -d '{"database": "cyberchase.db", "question": "How many episodes are there?"}' | grep -q '"status":"answered"'
-          docker exec intentsql id -u | grep -qx 10001
+            -d '{"database": "cyberchase.db", "question": "How many episodes are there?"}' > /tmp/answer.json
+          grep -q '"status":"answered"' /tmp/answer.json
+          test "$(docker exec intentsql id -u)" = 10001
       - if: always()
         run: docker logs intentsql || true
 

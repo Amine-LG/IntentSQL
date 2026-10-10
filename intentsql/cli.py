@@ -187,7 +187,7 @@ def _run_suite(args: argparse.Namespace) -> int:
 def cmd_provider(args: argparse.Namespace) -> int:
     """Show the selected model provider; optionally send one tiny decision to test it."""
     from intentsql.config import settings
-    from intentsql.jev import JevError, Usage, choice, noul, score, shared_client
+    from intentsql.jev import TEST_STATE, JevError, Usage, connection_test_questions, shared_client
     cfg = settings()
     client = shared_client()
     info = client.describe()
@@ -195,22 +195,21 @@ def cmd_provider(args: argparse.Namespace) -> int:
         print(cfg.notice)
     print(f"provider: {info['label']} [{info['provider'] or 'none'}]"
           f"{' (set by INTENTSQL_PROVIDER)' if cfg.locked_by_environment else ''}")
-    print(f"model: {info['model'] or '-'}  key: {'not needed' if info['provider'] == 'demo' else 'set' if info['has_key'] else 'missing'}  "
+    print(f"model: {info['model'] or '-'}  key: {'not needed' if info['provider'] == 'demo' else 'set' if info['has_key'] else 'none (optional)' if client.provider.custom else 'missing'}  "
           f"keys saved for: {', '.join(k for k in cfg.keys_present if k != 'demo') or 'none'}")
     if args.test:
         usage = Usage()
         try:
-            answers = client.ask({"ticket": "I was charged twice for one subscription."}, {
-                "team": choice("Which team should handle `ticket`?",
-                               {"billing": "charges and refunds", "technical": "bugs"}),
-                "urgency": score("How urgent is `ticket`?", ["routine", "soon", "blocked now"]),
-                "refund": noul("Is `ticket` asking for money back?")}, usage=usage)
+            answers = client.ask(TEST_STATE, connection_test_questions(client.provider.kinds), usage=usage)
         except JevError as exc:
             print(f"test failed: {exc}")
             return 1
-        print(("demo check (no model contacted): " if info["provider"] == "demo" else "test passed: ") + f"choice={answers['team'].choice} score={answers['urgency'].score} "
-              f"noul={answers['refund'].p:.2f} model={','.join(usage.models) or info['model']} "
-              f"input tokens={usage.input_tokens}")
+        parts = [f"choice={answers['team'].choice}" if "team" in answers else "",
+                 f"noul={answers['refund'].p:.2f}" if "refund" in answers else "",
+                 f"score={answers['urgency'].score}" if "urgency" in answers else ""]
+        print(("demo check (no model contacted): " if info["provider"] == "demo" else "test passed: ")
+              + " ".join(p for p in parts if p)
+              + f" model={','.join(usage.models) or info['model']} input tokens={usage.input_tokens}")
     return 0
 
 
@@ -218,11 +217,17 @@ def cmd_keys(args: argparse.Namespace) -> int:
     """Save a provider's API key in the IntentSQL workspace (owner-only), typed without echo."""
     import getpass
 
-    from intentsql.providers import PROVIDERS
+    from intentsql.config import all_providers
+    from intentsql.providers import ALIASES
     from intentsql.workspace import WorkspaceError, save_connection
-    info = PROVIDERS[args.provider]
+    providers = all_providers()
+    info = providers.get(ALIASES.get(args.provider, args.provider))
+    if info is None:
+        print(f"Unknown provider {args.provider}; use one of: {', '.join(providers)}")
+        return 2
+    hint = "leave empty to keep the saved key" + (", or if it needs none" if info.custom else "")
     key = "" if info.offline else getpass.getpass(
-        f"{info.label} {info.model_label} API key ({info.key_help}): ").strip()
+        f"{info.label} {info.model_label} API key ({info.key_help or hint}): ").strip()
     try:
         save_connection(provider=args.provider, api_key=key or None)
     except WorkspaceError as exc:
@@ -232,6 +237,43 @@ def cmd_keys(args: argparse.Namespace) -> int:
     print(f"{name} selected" + (" and its key saved (not shown)." if key else "."))
     if not info.offline:
         print("Run 'intent-sql provider --test' to check the connection.")
+    return 0
+
+
+def cmd_custom(args: argparse.Namespace) -> int:
+    """Add, list or remove custom decision models (System One protocol endpoints)."""
+    import getpass
+
+    from intentsql.config import all_providers, settings
+    from intentsql.providers import CUSTOM_PREFIX, missing_kinds
+    from intentsql.workspace import WorkspaceError, remove_custom_model, save_custom_model
+    try:
+        if args.action == "list":
+            customs = [p for p in all_providers().values() if p.custom]
+            if not customs:
+                print("No custom models. Add one with: intent-sql custom add NAME --url URL --model ID")
+            for p in customs:
+                has_key = "key saved" if p.name in settings().keys_present else "no key"
+                missing = missing_kinds(p)
+                print(f"{p.name}  {p.label}  {p.url}  model={p.model}  types={','.join(p.kinds)}  {has_key}"
+                      + (f"  (cannot be used: needs {', '.join(missing)})" if missing else "")
+                      + ("  [selected]" if p.name == settings().provider else ""))
+            return 0
+        if args.action == "remove":
+            remove_custom_model(args.name.removeprefix(CUSTOM_PREFIX))
+            print(f"Removed {args.name} and its key.")
+            return 0
+        key = getpass.getpass("API key (hidden; leave empty if the endpoint needs none): ").strip() \
+            if args.key else None
+        name = save_custom_model(slug=args.edit.removeprefix(CUSTOM_PREFIX) if args.edit else None,
+                                 label=args.name, url=args.url, model=args.model,
+                                 kinds=args.types.split(","), max_chars=args.max_chars,
+                                 api_key=key or None, select=args.use)
+    except WorkspaceError as exc:
+        print(exc)
+        return 1
+    print(f"Saved {name}" + (" and selected it" if args.use else "")
+          + ". It is not verified by IntentSQL: run 'intent-sql provider --test' after selecting it.")
     return 0
 
 
@@ -288,12 +330,29 @@ def main(argv: list[str] | None = None) -> int:
     bench.set_defaults(func=_guarded(cmd_benchmark))
 
     keys = sub.add_parser("keys", help="choose a model provider and save its API key (hidden input)")
-    keys.add_argument("provider", choices=("typesafe", "liquid", "demo"))
+    keys.add_argument("provider", help="typesafe, liquid, demo, or custom:<id>")
     keys.set_defaults(func=cmd_keys)
 
     prov = sub.add_parser("provider", help="show the selected model provider; --test sends one tiny decision")
-    prov.add_argument("--test", action="store_true", help="send one tiny choice/score/noul decision")
+    prov.add_argument("--test", action="store_true", help="send one tiny question per decision type")
     prov.set_defaults(func=cmd_provider)
+
+    custom = sub.add_parser("custom", help="add, list or remove custom decision models (your own endpoint)")
+    custom_sub = custom.add_subparsers(dest="action", required=True)
+    add = custom_sub.add_parser("add", help="add (or with --edit, change) a System One-compatible endpoint")
+    add.add_argument("name", help="a display name, e.g. 'My lab model'")
+    add.add_argument("--url", required=True, help="the endpoint URL (https://, or http:// on localhost)")
+    add.add_argument("--model", required=True, help="the model ID the endpoint expects")
+    add.add_argument("--types", default="choice,noul",
+                     help="decision types it supports: choice, noul, score (default: choice,noul)")
+    add.add_argument("--max-chars", type=int, default=None, help="largest request, in characters")
+    add.add_argument("--key", action="store_true", help="prompt for an API key (hidden input)")
+    add.add_argument("--use", action="store_true", help="select it after saving")
+    add.add_argument("--edit", metavar="ID", default=None, help="change the existing custom model ID")
+    custom_sub.add_parser("list", help="list custom models")
+    remove = custom_sub.add_parser("remove", help="remove a custom model and its key")
+    remove.add_argument("name", help="its ID, e.g. custom:my-lab-model")
+    custom.set_defaults(func=cmd_custom)
 
     serve = sub.add_parser("serve", help="start the web app")
     serve.add_argument("--host", default="127.0.0.1")

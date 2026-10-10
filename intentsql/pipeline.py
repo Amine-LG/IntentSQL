@@ -314,6 +314,7 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         result.status, result.message = REFUSED, "The request is empty."
         return result
     client = client or shared_client()
+    result.provider = getattr(getattr(client, "provider", None), "name", "")   # on every outcome
     t = time.monotonic()
     try:
         schema = load_schema(db_path)
