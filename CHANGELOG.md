@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.0 (unreleased, local)
+## 1.0.0-beta.1 (2026-10-10, not yet published)
 
-A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`).
+A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`). Python package version `1.0.0b1`.
 
 ### Architecture
 - **Grounding.** Deterministic. Its sources:
@@ -35,10 +35,25 @@ A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`).
 - **Read-only.** Requests to change data are refused (the Alpha's write path is gone).
 - **CLI.** `intent-sql ask | schema | benchmark | serve`.
 
-### Providers
-- OpenRouter (`typesafe/jev-1.13`, default), TypeSafe direct, OpenJEV and an offline mock, selected explicitly or by `auto`; no run-time fallback.
-- Provenance (provider, model snapshot, request id, cost) on every exchange; spending limit; per-provider calibration.
-- `intent-sql keys`, `intent-sql provider --balance --ping`.
+### Providers and model setup
+- Two supported decision models with the same question protocol: TypeSafe Jev (`jev-latest`) and Liquid AI d1 (`d1`, `d1:free`). Demo mode (formerly "mock") is used only when chosen, never as a fallback.
+- First-run setup in the app. Connection states: not configured, ready to test, connected (only after a real answer), key rejected, no credits, unavailable, incompatible, demo, locked by `INTENTSQL_PROVIDER`.
+- Keys are kept server-side (owner-only file), never returned to the page. `intent-sql keys <provider>` and `intent-sql provider --test`.
+- Provenance (provider, model, request id, cost) on every exchange; spending limit; per-provider calibration.
+- **Custom decision models.** Any endpoint that implements the System One protocol can be added, tested, selected, edited and removed, in the app or with `intent-sql custom`, without code changes.
+  - Custom models are grouped apart from the built-ins and labelled "not verified by IntentSQL".
+  - The connection test sends one question per declared decision type. Wrong-format replies are reported as *Incompatible*, naming what was wrong.
+  - HTTPS is required except on localhost. A saved key is dropped when the endpoint's host changes.
+- OpenRouter and OpenJEV, used during development, were removed: both development keys were rejected and neither produced any reported result.
+
+### Decision inspector
+- "How IntentSQL decided": what grounding found; each decision as asked, with its options, the model's probabilities and the top alternatives; the plan and its joins; the verification and the readings compared; the SQL with bound values. Raw JSON only in developer mode.
+- Per-decision probabilities are labelled as such and kept apart from calibrated overall confidence. Demo answers show no probabilities.
+
+### Release engineering
+- CI: tests on Linux and Windows with Python 3.10 to 3.13; build, clean install and a CLI/API smoke test; Docker; gitleaks over the full history; pip-audit. No secrets and no paid calls.
+- Security audit (docs/SECURITY.md); `.gitleaks.toml`; optional pre-commit hooks.
+- Example databases ship with their CC BY-NC-SA notice.
 
 ### Evaluation
 - **Spider pipeline.**
@@ -47,3 +62,4 @@ A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`).
   - Output for the test split is redacted.
 - **Hand-written suites.** A feature suite, an adversarial suite, and a frozen held-out suite on an unseen schema.
 - **Records.** The evaluation protocol (`docs/EVALUATION.md`) and the experiment log (`docs/EXPERIMENTS.md`), negative results included.
+- **Results.** Historical, TypeSafe `jev-latest`, code from 2026-10-09: Spider dev 76.8% ± 2.6 execution accuracy, against the Alpha's 33.8% on 80 train questions. The two are not directly comparable; see docs/EVALUATION.md#results. This build has not been measured live.

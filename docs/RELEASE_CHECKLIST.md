@@ -1,45 +1,44 @@
-# v1.0 release checklist
+# Release checklist: 1.0.0-beta.1
 
-Status as of 2026-10-10. ✅ done and verified · ⏳ blocked (needs a working Jev provider) · ➖ not planned.
+Status as of 2026-10-10. ✅ done and verified locally · ⏳ needs a working decision-model key or credits · 👤 needs the owner's action.
 
 ## Software (verified offline)
 
 | Item | Status | Evidence |
 |---|---|---|
-| Grounding, typed IR, compiler, read-only execution | ✅ | 125 offline tests (scripted Jev double) |
-| SQL feature coverage | ✅ | docs/CAPABILITIES.md; features suite at 92.9% (TypeSafe, 2026-10-10) |
-| Provider abstraction (OpenRouter, TypeSafe direct, OpenJEV, mock), with no hidden fallback | ✅ | tests/test_jev_client.py (request format, cost, budget, selection, errors) |
-| Credentials | ✅ | `~/.config/intentsql/providers.env` (0600) or the workspace settings (0600). Keys are sent only to their own provider and never returned, logged or committed. Tests check that a key never appears in exchanges or API responses |
-| Evaluations stop on fatal provider errors | ✅ | tests/test_benchmark_eval.py; `INTERRUPTED`, no report written |
-| Web UI | ✅ | Checked in Chrome: desktop and mobile, light and dark, settings and provider selector, ask flow, history, CSV, alternatives, mock labelling, no console errors |
-| CLI | ✅ | `ask`, `schema`, `benchmark`, `serve`, `keys`, `provider` |
-| Install | ✅ | `pip install .` in a fresh Python 3.12 venv; bundled databases and UI included |
-| Docker | ✅ | Image builds; health, `/api/ask` (mock) and static files served |
-| ruff, mypy | ✅ | clean (30 source files) |
-| Documentation | ✅ | README, ARCHITECTURE, CAPABILITIES, EVALUATION, EXPERIMENTS, CHANGELOG |
+| Grounding, typed IR, compiler, read-only execution | ✅ | Offline test suite with a scripted decision-model double |
+| Providers: TypeSafe Jev, Liquid AI d1, explicit demo mode; no hidden fallback | ✅ | tests/test_jev_client.py, tests/test_web.py |
+| Model setup and connection states (not configured, ready to test, connected only after a real answer, key rejected, no credits, unavailable, incompatible, demo, locked by environment) | ✅ | Browser-tested in a clean environment; the Liquid key-rejected path was checked against the real endpoint with an invalid key |
+| Keys server-side only (0600 file, never returned, never in `localStorage`) | ✅ | tests/test_web.py, tests/test_custom_models.py; the browser page and API responses were checked for the key after saving |
+| Custom decision models: add, test, select, edit, remove; compatibility test per decision type; *Incompatible* state; HTTPS rule; key dropped on host change; never demo on failure or removal | ✅ | tests/test_custom_models.py (mock transport); scripts/smoke.sh (real HTTP, local protocol stub and chat-style API); browser-tested, desktop and mobile, light and dark |
+| Decision inspector (found, decided, planned, checked, SQL and data); no probabilities shown in demo mode | ✅ | Browser-tested, desktop and 390 px mobile, light and dark |
+| Evaluations stop on fatal provider errors | ✅ | tests/test_benchmark_eval.py (`INTERRUPTED`, no report) |
+| CLI (`ask`, `schema`, `benchmark`, `serve`, `keys`, `provider`, `custom`, `--version`) | ✅ | scripts/smoke.sh |
+| Packaging: wheel and sdist build without warnings; clean install in a fresh Python 3.12 venv; UI, example data and data notice included | ✅ | Local run of the CI `package` job steps |
+| Docker: builds, runs as non-root, health check, demo answer | ✅ | Local run of the CI `docker` job steps |
+| Secret scan, dependency audit, code scan | ✅ | docs/SECURITY.md |
+| ruff, mypy, `node --check` | ✅ | Clean |
+| GitHub Actions CI | ⏳ | Workflow written and its steps run locally; it has never run on GitHub (nothing is pushed) |
 
 ## Measurements
 
 | Item | Status | Notes |
 |---|---|---|
-| Spider dev with TypeSafe direct `jev-latest` | ✅ | 76.8% ± 2.6 EX; 86.0% accuracy on confident answers (2 × 300 random) |
-| Regression of the latest commits | ⏳ | Elapsed time, cross-level arithmetic, flags, name pairs and the HAVING split are covered by offline tests but not yet re-measured live |
-| Provider check (balance, ping, smoke suite) for OpenRouter | ⏳ | The key tried on 2026-10-10 was rejected: "API key expired" |
-| OpenJEV | ⏳ | The key tried on 2026-10-10 was rejected: "Missing or invalid API key" |
-| TypeSafe direct | ⏳ | HTTP 402, no credits |
-| Development suites and train seeds 31/21 with the release provider | ⏳ | `scripts/release_eval.sh <provider>` |
-| Calibration table for the release provider | ⏳ | Fit on that provider's train runs before quoting confident-answer accuracy (docs/EVALUATION.md) |
-| Frozen held-out suite (45 cases, clinic schema) | ⏳ | Run once on frozen code |
-| Spider test milestone (≥ 600 questions) | ⏳ | `--allow-test`; aggregates only |
+| Historical TypeSafe Jev results (Spider dev 76.8% ± 2.6) | ✅ | Code from 2026-10-09; docs/EVALUATION.md#results |
+| TypeSafe Jev on this build | ⏳ | HTTP 402 (no credits) |
+| Liquid AI d1: connection check, smoke, development suites | ⏳ | No key was available |
+| Liquid AI d1 calibration table | ⏳ | Fit from its train runs (`scripts/fit_calibration.py`) before quoting its confident-answer accuracy |
+| Frozen held-out suite; Spider test milestone | ⏳ | Run once, on frozen code |
 
-## To finish the release (about $1 of provider credit)
+## Before publishing (owner)
 
-```bash
-.venv/bin/intent-sql keys --provider openrouter         # replacement key, hidden input
-scripts/release_eval.sh openrouter                       # check, smoke, suites, train, dev, holdout, test
-```
-
-If OpenRouter cannot be used, run `scripts/release_eval.sh openjev` instead, and report its results separately. Afterwards:
-1. Fit the provider's calibration table from its train runs.
-2. Update the README results with the provider named.
-3. Tag the release candidate locally: `git tag v1.0.0-rc1`. Nothing is pushed.
+1. 👤 Review the final report, `git log main..v1` and the README.
+2. ⏳ Optionally run a short live check:
+   ```bash
+   intent-sql keys liquid
+   STEPS="check smoke" scripts/release_eval.sh liquid
+   ```
+3. 👤 Push `v1` and let GitHub Actions run; fix anything it finds.
+4. 👤 Enable private vulnerability reporting (Settings > Code security), which docs/SECURITY.md refers to.
+5. 👤 Merge into `main` and push the tag `v1.0.0-beta.1`. Create a GitHub *pre-release* from `docs/RELEASE_NOTES.md`.
+6. 👤 Deactivate the development keys that were rejected (OpenRouter, OpenJEV), if they are not already.

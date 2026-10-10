@@ -2,7 +2,7 @@
 
 IntentSQL turns a natural-language request about a SQLite database into one parameterized, read-only SQL query. The design rests on one rule: **code proposes, Jev chooses, and code builds.**
 
-Every identifier, value, join path and SQL construct comes from deterministic code that inspected the database. Jev, TypeSafe's decision model, answers small, bounded questions about which of the proposed readings the request means. Jev never writes SQL, never names a column and never sees a free-text field it could fill.
+Every identifier, value, join path and SQL construct comes from deterministic code that inspected the database. A decision model answers small, bounded questions about which of the proposed readings the request means. The model is TypeSafe's Jev, which IntentSQL was developed and measured with, Liquid AI's d1, or any endpoint of the user's that speaks the same System One protocol (docs/CUSTOM_MODELS.md). It never writes SQL, never names a column and never sees a free-text field it could fill. Below, "Jev" stands for whichever decision model is selected.
 
 ```
 request ──► grounding ──► candidates ──► Jev: one parallel round of bounded decisions
@@ -27,15 +27,15 @@ request ──► grounding ──► candidates ──► Jev: one parallel rou
 | `measures.py` | Derived columns that a request may mean but the schema does not store: products (quantity × price), differences and durations, sums, ratios, date periods (year, month, weekday) |
 | `cues.py`, `candidates.py`, `questions.py` | Cue words; candidate generation (every option offered to Jev, built from the schema and literals); the bounded questions and shared decision state |
 | `interpret.py` | The decision rounds, deterministic assembly of answers into an `Intent`, follow-up questions, one-flip alternatives |
-| `providers.py`, `mock.py` | Jev providers (OpenRouter, TypeSafe direct, OpenJEV) and the offline mock |
+| `providers.py`, `mock.py` | Decision-model providers (TypeSafe Jev, Liquid AI d1, user-configured custom endpoints) and the offline demo client |
 | `intent.py` | The semantic plan (`Intent`, `OutputItem`, `Condition`, `Ordering`) and the deterministic translation to IR |
 | `ir.py` | Typed relational IR: expressions, conditions, joins, FROM subqueries, window functions, set operations |
 | `compiler.py` | IR → SQLite SQL with bound parameters; structural validation (unknown objects, aggregates in WHERE, set-width mismatches, unnamed derived columns …) |
 | `render.py` | Plain-English description of an `Intent`: shown to users and compared with the request during verification |
 | `pipeline.py` | `answer()`: the whole flow, verification, execution with row/time limits, empty-result explanations |
-| `jev.py` | Jev client: chunking, parallel requests, validated answers, retries, usage accounting, optional disk cache |
+| `jev.py` | Decision-model client: chunking, parallel requests, validated answers, retries, usage and spend accounting, connection states, optional disk cache |
 | `web.py`, `static/` | Local web app and JSON API (including server-sent progress events) |
-| `cli.py` | `intent-sql ask | schema | benchmark | serve` |
+| `cli.py` | `intent-sql` commands: `ask`, `schema`, `benchmark`, `serve`, `keys`, `provider` |
 | `benchmark/` | Spider loading, stratified sampling, execution matching, reports, hand-written suites |
 
 ## Grounding

@@ -62,12 +62,67 @@ Every run writes a JSON report containing:
 
 The reports live outside the repository, in `../IntentSQL-artifacts/v1-runs/`.
 
-## Providers (added 2026-10-10)
+## Providers (added 2026-10-10, revised for the Beta)
 
-The same Jev model can be reached through several providers (TypeSafe direct, OpenRouter, OpenJEV). They are **not** assumed to be identical:
+The supported decision models are TypeSafe Jev (`jev-latest`) and Liquid AI d1 (`d1`, `d1:free`). Both use the same System One question protocol, but they are different models and are **never** assumed to be interchangeable:
 
-- **One provider per run.** Every evaluation runs against a single provider. Its report records the provider, the model snapshot that answered each request, and the code revision.
-- **No fallback mid-run.** If a provider fails fatally (expired key, no credits, spending limit, an outage that outlasts the retries), the run stops with `INTERRUPTED` and writes no report. A partial run is never completed with another provider.
-- **Separate results.** Results are reported per provider, for example "Spider dev, OpenRouter typesafe/jev-1.13: …".
-- **Calibration is per provider.** The current table was measured with TypeSafe direct `jev-latest` on train. A provider without its own table reports the raw verification score and uses the raw "uncertain" threshold. Before any of its confident-answer figures are compared, a table is fitted on train runs for that provider.
-- **Spending.** `scripts/release_eval.sh <provider>` runs the protocol steps in order under `INTENTSQL_BUDGET_USD`, which defaults to $3. At the listed $0.042 per million input tokens, the full plan of about 2,000 questions costs roughly $1.
+- **One provider per run.** Every evaluation runs against a single provider. Its report records:
+  - the provider;
+  - the model that answered each request;
+  - the code revision.
+- **No fallback mid-run.** A run stops with `INTERRUPTED` and writes no report when the provider fails fatally:
+  - a rejected key;
+  - no credits;
+  - a spending limit;
+  - an outage that outlasts the retries.
+
+  A partial run is never completed with another provider.
+- **Separate results.** Results are always reported per provider.
+- **Calibration is per provider.** The only calibration table was fitted on TypeSafe `jev-latest` train runs. Liquid d1 reports the raw verification score until its own table is fitted (`scripts/fit_calibration.py`) from its train runs.
+- **Spending.** `scripts/release_eval.sh <typesafe|liquid>` runs the protocol in order, under `INTENTSQL_BUDGET_USD` (default $3). Jev lists $0.042 per million input tokens, so the full plan of about 2,000 questions costs roughly $1. Liquid does not report a per-request cost, so IntentSQL estimates spend from input tokens at its listed price.
+
+Earlier development also used OpenRouter's and OpenJEV's access to Jev. On 2026-10-10 both keys were rejected (expired / invalid), and neither produced any of the results below. Both were removed for the Beta.
+
+## Results
+
+All results come from TypeSafe `jev-latest` and are **historical**: they were measured on code from 2026-10-09 and 2026-10-10. The code has changed since then:
+- the provider layer was rewritten;
+- `interpret.py` was split into modules;
+- arithmetic across aggregation levels and elapsed-time questions were added.
+
+Those changes are covered by offline tests, but the Beta build itself has not been measured. The TypeSafe account returned HTTP 402 (no credits), and no Liquid key was available. Reports are in `../IntentSQL-artifacts/v1-runs/`.
+
+| Evaluation | Data | Result | Report |
+|---|---|---|---|
+| Spider dev (validation) | 2 random batches of 300, seeds 15123661 / 89959258, 2026-10-09 | **76.8% ± 2.6 EX**. By hardness: easy 84.0, medium 80.6, hard 73.5, extra-hard 59.4 | `v2l-dev-random2x300.json` |
+| Confident answers, same run | | 86.0% answered confidently, 86.0% of those correct; 12.0% of all questions answered confidently but wrongly | same |
+| Accuracy by coverage, same run | | 90%: 84.7, 80%: 88.3, 70%: 91.7, 60%: 94.0, 50%: 94.9 | same |
+| Spider train (development) | 300 questions each, seeds 21 / 31, 2026-10-09 | 76.3% / 75.3% | `v2m-train-300-s21/s31.json` |
+| Capability suite | `features.json`, 56 cases, 2026-10-10 | 92.9% | |
+| Adversarial suite | `adversarial.json`, 65 cases, 2026-10-10 | 95.4%; 5 of 6 unsupported requests refused, no false refusals | |
+| Held-out suite | `holdout.json` | not run yet | |
+| Spider test | ≥ 600 questions | not run yet | |
+
+### Compared with the Alpha
+
+| System | Data | EX |
+|---|---|---|
+| Alpha `v0.1.0-alpha.1` | Spider train, 80 questions, seed 11 | 33.8% (easy 68, medium 44, hard 0, extra-hard 0) |
+| First v1 prototype (2026-10-09 21:22 UTC) | the same 80 questions | 58.8% |
+| v1, three iterations later (21:28 UTC) | the same 80 questions | 77.5% |
+| v1 (historical, above) | Spider dev, 600 questions | 76.8% |
+
+The same-sample rows are the only like-for-like comparison. Even those flatter v1, because train questions were development data, and that sample was inspected while v1 was being built. The dev figure is the fairer estimate of v1's accuracy, but it is not comparable with the Alpha's train figure:
+- different split;
+- 600 questions against 80;
+- different code.
+
+Either way, the Alpha could not express joins beyond one hop, subqueries, set operations or arithmetic (docs/AUDIT.md). That accounts for its 0% on hard and extra-hard questions.
+
+### To measure this Beta
+
+```bash
+intent-sql keys liquid            # or typesafe
+STEPS="check smoke dev-suites" scripts/release_eval.sh liquid     # first look: ~140 questions, ~$0.07 at Jev's listed price
+scripts/release_eval.sh liquid    # the full protocol, about $1
+```
