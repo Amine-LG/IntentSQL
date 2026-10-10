@@ -1,4 +1,4 @@
-"""Deterministic offline stand-in for Jev (provider ``mock``).
+"""Deterministic offline stand-in for a decision model (provider ``demo``).
 
 It answers every bounded question with a fixed, conservative default: "none"
 / "no" style options where a question offers them, the first option
@@ -44,11 +44,14 @@ class MockClient:
         self.rules = rules or []
         self.fallback = fallback
         self.asked: list[dict[str, Question]] = []
-        self.provider = PROVIDERS["mock"]
-        self.model = "mock"
+        self.provider = PROVIDERS["demo"]
+        self.model = "demo"
+
+    def close(self) -> None:
+        pass
 
     def describe(self) -> dict[str, Any]:
-        return {"provider": "mock", "label": self.provider.label, "url": "", "model": "mock",
+        return {"provider": "demo", "label": self.provider.label, "url": "", "model": "demo",
                 "has_key": False, "budget_usd": None, "spent_usd": 0.0, "requests": 0}
 
     def answer(self, key: str, question: Question) -> Answer:
@@ -99,10 +102,10 @@ class MockClient:
         self.asked.append(questions)
         usage.calls += 1
         usage.rounds += 1
-        usage.provider = "mock"
+        usage.provider = "demo"
         answers = {key: self.answer(key, q) for key, q in questions.items()}
         if log is not None:
             log.append(Exchange(purpose, state, {k: q.payload() for k, q in questions.items()},
-                                {k: a.__dict__ for k, a in answers.items()}, 0, 0, 0, "mock",
-                                provider="mock"))
+                                {k: a.__dict__ for k, a in answers.items()}, 0, 0, 0, "demo",
+                                provider="demo"))
         return answers

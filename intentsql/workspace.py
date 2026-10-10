@@ -154,32 +154,54 @@ def saved_connection() -> dict[str, Any]:
         return {}
 
 
-def save_connection(url: str | None, model: str | None, api_key: str | None, *,
-                    provider: str | None = None) -> None:
-    """Persist the provider choice, endpoint/model overrides (TypeSafe direct only) and a
-    key for ``provider`` (or the active provider) only when a new one is supplied."""
-    from intentsql.providers import PROVIDERS
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+_KEY_SHAPE = re.compile(r"^[A-Za-z0-9_\-.:]{16,300}$")
+
+
+def save_connection(*, provider: str | None = None, api_key: str | None = None,
+                    model: str | None = None, clear_key: bool = False) -> None:
+    """Persist the chosen provider, its model and (when supplied) its key.
+
+    Stored in <workspace>/connection.json with owner-only permissions.  Keys are kept per
+    provider; obsolete global endpoint/model overrides from earlier versions are dropped
+    (a stale ``model`` could otherwise follow the user to another provider)."""
+    from intentsql.providers import ALIASES, PROVIDERS
     current = saved_connection()
-    if provider is not None:
-        if provider != "auto" and provider not in PROVIDERS:
+    for obsolete in ("url", "model", "api_key"):
+        if obsolete == "api_key" and current.get("api_key"):
+            current["keys"] = {"typesafe": current["api_key"], **_dict(current.get("keys"))}
+        current.pop(obsolete, None)
+    name = ALIASES.get(provider, provider) if provider else None
+    if name is not None:
+        if name not in PROVIDERS:
             raise WorkspaceError(f"Unknown provider {provider}")
-        current["provider"] = provider
-    if url is not None:
-        current["url"] = url.strip()
-    if model is not None:
-        current["model"] = model.strip()
+        current["provider"] = name
+    target = name or settings().provider
+    info = PROVIDERS.get(target)
+    if model:
+        if info is None or model not in info.models:
+            raise WorkspaceError(f"Unknown model {model} for {target or 'this provider'}")
+        current["models"] = {**_dict(current.get("models")), target: model}
+    keys = _dict(current.get("keys"))
+    if clear_key and target:
+        keys.pop(target, None)
     if api_key:
-        target = provider if provider and provider != "auto" else settings().provider
-        raw = current.get("keys")
-        keys: dict[str, str] = raw if isinstance(raw, dict) else {}
-        keys[target] = api_key.strip()
-        current["keys"] = keys
-        if target == "typesafe":
-            current.pop("api_key", None)
+        key = api_key.strip()
+        if info is None or info.offline:
+            raise WorkspaceError("This provider does not use an API key.")
+        if not _KEY_SHAPE.match(key):
+            raise WorkspaceError("That does not look like an API key (letters, digits and - _ . : only).")
+        keys[target] = key
+    current["keys"] = keys
     path = connection_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(current, handle)
     os.replace(tmp, path)
+    os.chmod(path, 0o600)
     settings.cache_clear()

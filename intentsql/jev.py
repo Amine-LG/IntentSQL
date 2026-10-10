@@ -44,9 +44,11 @@ class JevError(RuntimeError):
     stays unreachable after retries) will fail every request; batch evaluations stop on them
     instead of recording a run of errors as results."""
 
-    def __init__(self, message: str, *, fatal: bool = False) -> None:
+    def __init__(self, message: str, *, fatal: bool = False, kind: str = "error") -> None:
         super().__init__(message)
         self.fatal = fatal
+        # auth | credits | budget | unavailable | request | not_configured | protocol | error
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -130,7 +132,7 @@ class Exchange:
     model: str | None
     cached: bool = False
     provider: str = ""
-    cost_usd: float | None = None     # as reported by the provider (OpenRouter)
+    cost_usd: float | None = None     # when the provider reports a cost
     request_id: str | None = None
 
 
@@ -181,6 +183,35 @@ def _validate(key: str, question: Question, raw: Any) -> Answer:
     return Answer("choice", selected, clean, raw.get("confidence"))
 
 
+# ---- connection state (what the app shows; never 'connected' without a real answer) ----
+
+FAILURE_STATES = {"auth": "auth_failed", "credits": "no_credits", "unavailable": "unavailable",
+                  "request": "error", "not_configured": "not_configured", "budget": "budget_reached"}
+
+
+@dataclass
+class ConnectionState:
+    state: str              # connected | auth_failed | no_credits | unavailable | budget_reached | error | ...
+    message: str = ""
+    model_snapshot: str | None = None
+    checked_at: float = 0.0
+
+
+_STATES: dict[tuple[str, str], ConnectionState] = {}
+_STATES_LOCK = threading.Lock()
+
+
+def record_state(provider: str, model: str, state: str, message: str = "",
+                 snapshot: str | None = None) -> None:
+    with _STATES_LOCK:
+        _STATES[(provider, model)] = ConnectionState(state, message, snapshot, time.time())
+
+
+def connection_state(provider: str, model: str) -> ConnectionState | None:
+    with _STATES_LOCK:
+        return _STATES.get((provider, model))
+
+
 class BudgetExceeded(JevError):
     """The configured spending limit has been reached; no further requests are sent."""
 
@@ -199,7 +230,7 @@ class _Budget:
             if self.limit is not None and self.spent >= self.limit:
                 raise BudgetExceeded(f"The spending limit of ${self.limit:.2f} has been reached "
                                      f"(${self.spent:.4f} spent); no further Jev requests are sent.",
-                                     fatal=True)
+                                     fatal=True, kind="budget")
 
     def add(self, cost: float | None) -> None:
         with self.lock:
@@ -291,21 +322,26 @@ class JevClient:
                     with lock:
                         usage.retries += 1
                     continue
-                raise JevError(f"{name} did not respond in time.", fatal=True) from exc
+                raise JevError(f"{name} did not respond in time.", fatal=True, kind="unavailable") from exc
             except httpx.HTTPError as exc:
                 if attempt <= self.max_retries:
                     with lock:
                         usage.retries += 1
                     time.sleep(0.3 * attempt)
                     continue
-                raise JevError(f"Could not reach {name}. Check the network.", fatal=True) from exc
+                raise JevError(f"Could not reach {name}. Check the network.", fatal=True,
+                               kind="unavailable") from exc
             if response.status_code == 200:
                 try:
                     data = response.json()
                 except ValueError as exc:
-                    raise JevError(f"{name} returned invalid JSON.") from exc
+                    raise JevError(f"{name} returned invalid JSON.", kind="protocol") from exc
                 reported = (data.get("usage") or {}) if isinstance(data, dict) else {}
-                self.budget.add(_number(reported.get("cost")))
+                cost = _number(reported.get("cost"))
+                if cost is None and self.provider.price_per_mtok is not None:
+                    tokens = _number(reported.get("input_tokens")) or 0.0
+                    cost = tokens * self.provider.price_per_mtok / 1_000_000     # an estimate
+                self.budget.add(cost)
                 if cache:
                     cache.parent.mkdir(parents=True, exist_ok=True)
                     tmp = cache.with_suffix(".tmp")
@@ -322,18 +358,37 @@ class JevClient:
                     delay = 0.5 * 2 ** (attempt - 1)
                 time.sleep(delay)
                 continue
-            raise JevError(self._error(response.status_code) + _detail(response, self._api_key),
-                           fatal=response.status_code in FATAL_STATUS or response.status_code in RETRYABLE)
+            status = response.status_code
+            raise JevError(self._error(status) + _detail(response, self._api_key),
+                           fatal=status in FATAL_STATUS or status in RETRYABLE,
+                           kind={401: "auth", 403: "auth", 402: "credits", 404: "request", 422: "request"}.get(
+                               status, "unavailable" if status in RETRYABLE else "error"))
 
     # -- public ------------------------------------------------------------------
     def ask(self, state: Any, questions: Mapping[str, Question], *, usage: Usage,
             log: list[Exchange] | None = None, purpose: str = "") -> dict[str, Answer]:
-        """Ask all questions about ``state`` in as few concurrent requests as possible."""
+        """Ask all questions about ``state`` in as few concurrent requests as possible.
+
+        Every real outcome updates the provider's connection state shown in the app:
+        'connected' only after a successful answer, the actual failure otherwise."""
         if not questions:
             return {}
+        try:
+            answers = self._ask(state, questions, usage=usage, log=log, purpose=purpose)
+        except JevError as exc:
+            if exc.kind in FAILURE_STATES:
+                record_state(self.provider.name, self.model, FAILURE_STATES[exc.kind], str(exc))
+            raise
+        if not all(e.cached for e in (log or [])[-1:]):
+            record_state(self.provider.name, self.model, "connected", "", usage.models[-1] if usage.models else None)
+        return answers
+
+    def _ask(self, state: Any, questions: Mapping[str, Question], *, usage: Usage,
+             log: list[Exchange] | None = None, purpose: str = "") -> dict[str, Answer]:
         if not self.configured:
             variables = " or ".join(self.provider.key_variables) or "a key"
-            raise JevError(f"No API key configured for {self.provider.label}. Set {variables}.")
+            raise JevError(f"No API key is set for {self.provider.label}. Add one in Settings "
+                           f"or set {variables}.", fatal=True, kind="not_configured")
         chunks = _chunk(questions, self.max_chars)
         lock = threading.Lock()
         started = time.monotonic()
@@ -345,7 +400,7 @@ class JevClient:
             data, cached = self._post(body, usage, lock)
             raw_answers = data.get("answers") if isinstance(data, dict) else None
             if not isinstance(raw_answers, dict):
-                raise JevError(f"{self.provider.label} returned no answers object.")
+                raise JevError(f"{self.provider.label} returned no answers object.", kind="protocol")
             answers = {}
             for key, question in chunk.items():
                 if key not in raw_answers:
@@ -423,15 +478,40 @@ _SHARED: Any = None
 _SHARED_LOCK = threading.Lock()
 
 
-def shared_client() -> JevClient:
-    """The client for the configured provider (the offline mock when that is selected)."""
+class UnselectedClient:
+    """Stands in when no model is selected: asking explains how to choose one."""
+
+    configured = False
+    model = ""
+
+    def __init__(self) -> None:
+        from intentsql.providers import Provider
+        self.provider = Provider("", "No model selected", "", "", ("",), ())
+
+    def close(self) -> None:
+        pass
+
+    def describe(self) -> dict[str, Any]:
+        return {"provider": "", "label": self.provider.label, "url": "", "model": "", "has_key": False,
+                "budget_usd": None, "spent_usd": 0.0, "requests": 0}
+
+    def ask(self, *args: Any, **kwargs: Any) -> dict[str, Answer]:
+        raise JevError("No model is selected. Open Settings to choose TypeSafe Jev or Liquid d1, "
+                       "or try the demo mode.", fatal=True, kind="not_configured")
+
+
+def shared_client() -> Any:
+    """The client for the selected provider; the demo client only when demo mode is chosen."""
     global _SHARED
     with _SHARED_LOCK:
         if _SHARED is None:
             from intentsql.config import settings
-            if settings().provider == "mock":
+            name = settings().provider
+            if name == "demo":
                 from intentsql.mock import MockClient
                 _SHARED = MockClient()
+            elif not name:
+                _SHARED = UnselectedClient()
             else:
                 _SHARED = JevClient()
         return _SHARED

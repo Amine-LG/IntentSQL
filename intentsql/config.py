@@ -2,12 +2,12 @@
 
 Recognized variables (all optional):
 
-``INTENTSQL_PROVIDER``                            ``auto`` (default), ``openrouter``, ``typesafe``,
-                                                  ``openjev`` or ``mock`` (see providers.py).
-``OPENROUTER_API_KEY``                            Key for TypeSafe Jev via OpenRouter.
-``SYSTEM_ONE_API_KEY`` (or ``TYPESAFE_API_KEY``)  Key for TypeSafe's own API.
-``OPENJEV_API_KEY``                               Key for OpenJEV.
-``SYSTEM_ONE_URL`` / ``SYSTEM_ONE_MODEL``         Override the endpoint / model of the selected provider.
+``INTENTSQL_PROVIDER``                            ``typesafe``, ``liquid`` or ``demo``; locks the choice
+                                                  (otherwise it is made in the app).
+``SYSTEM_ONE_API_KEY`` (or ``TYPESAFE_API_KEY``)  Key for TypeSafe Jev.
+``LIQUID_API_KEY``                                Key for Liquid AI d1.
+``INTENTSQL_MODEL`` / ``INTENTSQL_URL``           Advanced: override the model / endpoint of the
+                                                  selected provider.
 ``INTENTSQL_BUDGET_USD``                          Stop sending requests once reported cost reaches this.
 ``INTENTSQL_JEV_CACHE``                           Directory for a development response cache.
 ``INTENTSQL_WORKSPACE``                           Where imported databases and settings live.
@@ -59,7 +59,7 @@ def _default_workspace() -> Path:
 
 @dataclass(frozen=True)
 class Settings:
-    provider: str                       # resolved provider name
+    provider: str                       # resolved provider name; "" when no model is selected
     provider_requested: str             # what was configured ("auto" or a name)
     jev_api_key: str                    # key of the resolved provider (never exposed)
     jev_url: str
@@ -68,6 +68,8 @@ class Settings:
     workspace: Path
     budget_usd: float | None = None
     keys_present: tuple[str, ...] = ()  # providers that have a key (names only)
+    locked_by_environment: bool = False # INTENTSQL_PROVIDER is set: the app cannot change it
+    notice: str = ""                    # e.g. a saved provider that is no longer supported
 
     def key_for(self, name: str) -> str:
         return _keys(self.workspace).get(name, "")
@@ -117,7 +119,7 @@ def _keys(workspace: Path) -> dict[str, str]:
 
 @lru_cache(maxsize=1)
 def settings() -> Settings:
-    from intentsql.providers import AUTO_ORDER, PROVIDERS
+    from intentsql.providers import ALIASES, AUTO_ORDER, PROVIDERS
     files = _file_values()
 
     def get(name: str) -> str:
@@ -126,21 +128,34 @@ def settings() -> Settings:
     workspace = Path(get("INTENTSQL_WORKSPACE") or _default_workspace()).expanduser()
     saved = _saved(workspace)
     keys = _keys(workspace)
-    requested = (os.environ.get("INTENTSQL_PROVIDER") or saved.get("provider")
-                 or files.get("INTENTSQL_PROVIDER") or "auto").strip().lower()
+    environment = (os.environ.get("INTENTSQL_PROVIDER") or "").strip().lower()
+    requested = (environment or str(saved.get("provider") or "") or files.get("INTENTSQL_PROVIDER")
+                 or "auto").strip().lower()
+    requested = ALIASES.get(requested, requested)
+    notice = ""
+    if requested != "auto" and requested not in PROVIDERS:
+        notice = f"The provider '{requested}' is not supported in this version; choose another model."
+        requested = "auto"
     if requested == "auto":
-        name = next((n for n in AUTO_ORDER if keys.get(n)), AUTO_ORDER[0])
+        name = next((n for n in AUTO_ORDER if keys.get(n)), "")
     else:
-        name = requested if requested in PROVIDERS else AUTO_ORDER[0]
-    info = PROVIDERS[name]
-    overrides = name == "typesafe"      # legacy endpoint/model overrides apply to TypeSafe direct
-    url = (get("SYSTEM_ONE_URL") or saved.get("url") or "") if overrides else ""
-    model = (get("SYSTEM_ONE_MODEL") or saved.get("model") or "") if overrides else ""
+        name = requested
+    info = PROVIDERS.get(name)
+    url = model = ""
+    if info is not None:
+        # Advanced overrides from the environment only; the app stores a model per provider.
+        url = get("INTENTSQL_URL") or (get("SYSTEM_ONE_URL") if name == "typesafe" else "")
+        raw_models = saved.get("models")
+        chosen = raw_models.get(name, "") if isinstance(raw_models, dict) else ""
+        model = (get("INTENTSQL_MODEL") or (get("SYSTEM_ONE_MODEL") if name == "typesafe" else "")
+                 or (chosen if chosen in info.models else ""))
     budget = get("INTENTSQL_BUDGET_USD")
     return Settings(
         provider=name, provider_requested=requested,
-        jev_api_key=keys.get(name, ""), jev_url=url or info.url, jev_model=model or info.model,
+        jev_api_key=keys.get(name, ""), jev_url=url or (info.url if info else ""),
+        jev_model=model or (info.model if info else ""),
         jev_cache_dir=get("INTENTSQL_JEV_CACHE") or None, workspace=workspace,
         budget_usd=float(budget) if budget else None,
         keys_present=tuple(n for n in PROVIDERS if keys.get(n)),
+        locked_by_environment=bool(environment), notice=notice,
     )

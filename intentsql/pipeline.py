@@ -23,7 +23,7 @@ from intentsql.interpret import Decision, Strategy, alternatives, interpret
 from intentsql.jev import Exchange, JevClient, JevError, Usage, choice, noul, shared_client
 from intentsql.render import condition as condition_text
 from intentsql.render import describe
-from intentsql.schema import load_schema
+from intentsql.schema import load_schema, quote_identifier
 
 ANSWERED, AMBIGUOUS, REFUSED, ERROR = "answered", "ambiguous", "refused", "error"
 MAX_ROWS = 1000
@@ -217,8 +217,9 @@ def _explain_empty(schema, db_path: str | Path, intent: Intent) -> str | None:
         if column.kind == "date" and column.formula is None:
             table = schema.table(column.table)
             try:
-                _, rows, _ = execute_read(db_path, f'SELECT MIN("{column.name}"), MAX("{column.name}") '
-                                                   f'FROM "{table.physical}"', (), max_rows=1)
+                name, source = quote_identifier(column.name), quote_identifier(table.physical)
+                _, rows, _ = execute_read(db_path, f"SELECT MIN({name}), MAX({name}) FROM {source}", (),
+                                          max_rows=1)
                 if rows and rows[0][0]:
                     span = f" (the data covers {rows[0][0]} to {rows[0][1]})"
             except sqlite3.Error:

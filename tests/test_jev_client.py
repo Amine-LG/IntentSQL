@@ -121,7 +121,7 @@ if __name__ == "__main__":
 class ProviderTest(unittest.TestCase):
     """Request format, accounting and provenance per provider (no network)."""
 
-    def test_openrouter_request_cost_score_and_provenance(self):
+    def test_liquid_request_score_and_provenance(self):
         seen = {}
 
         def handler(request):
@@ -130,7 +130,7 @@ class ProviderTest(unittest.TestCase):
             body = json.loads(request.content)
             seen["body"] = body
             return httpx.Response(200, json={
-                "model": "typesafe/jev-1.13-20260917", "id": "gen-dec-1", "provider": "TypeSafe",
+                "model": "d1", "id": "req-1",
                 "answers": {"team": {"type": "choice", "choice": "billing", "confidence": 1,
                                      "probabilities": {"billing": 1, "technical": 0}},
                             "urgency": {"type": "score", "score": 2, "confidence": 1,
@@ -138,23 +138,23 @@ class ProviderTest(unittest.TestCase):
                             "refund": {"type": "noul", "noul": 0.82}},
                 "usage": {"input_tokens": 447, "output_tokens": 69, "cost": 0.000018774}})
 
-        client = JevClient(api_key="k-secret", provider="openrouter", cache_dir="")
+        client = JevClient(api_key="k-secret", provider="liquid", cache_dir="")
         client._http = httpx.Client(transport=httpx.MockTransport(handler))
         usage, log = Usage(), []
         answers = client.ask({"ticket": "charged twice"}, {
             "team": choice("Which team?", {"billing": "money", "technical": "bugs"}),
             "urgency": score("How urgent?", ["routine", "soon", "now"]),
             "refund": noul("Refund requested?")}, usage=usage, log=log)
-        self.assertEqual(seen["url"], "https://openrouter.ai/api/alpha/decisions")
+        self.assertEqual(seen["url"], "https://api.liquid.ai/decisions/v1/systemone")
         self.assertEqual(seen["auth"], "Bearer k-secret")
-        self.assertEqual(seen["body"]["model"], "typesafe/jev-1.13")
+        self.assertEqual(seen["body"]["model"], "d1")
         self.assertEqual(seen["body"]["questions"]["urgency"]["criteria"], ["routine", "soon", "now"])
         self.assertEqual(answers["team"].choice, "billing")
         self.assertEqual(answers["urgency"].score, 2.0)
         self.assertAlmostEqual(answers["refund"].p, 0.82)
         self.assertAlmostEqual(usage.cost_usd, 0.000018774)
-        self.assertEqual(usage.models, ["typesafe/jev-1.13-20260917"])
-        self.assertEqual((log[0].provider, log[0].request_id), ("openrouter", "gen-dec-1"))
+        self.assertEqual(usage.models, ["d1"])
+        self.assertEqual((log[0].provider, log[0].request_id), ("liquid", "req-1"))
         self.assertNotIn("k-secret", json.dumps([e.__dict__ for e in log], default=str))
         self.assertNotIn("k-secret", json.dumps(client.describe()))
 
@@ -164,7 +164,7 @@ class ProviderTest(unittest.TestCase):
                 "model": "m", "answers": {"a": {"type": "noul", "noul": 0.5}},
                 "usage": {"input_tokens": 10, "output_tokens": 1, "cost": 0.01}})
 
-        client = JevClient(api_key="k", provider="openrouter", cache_dir="", budget_usd=0.015)
+        client = JevClient(api_key="k", provider="liquid", cache_dir="", budget_usd=0.015)
         client._http = httpx.Client(transport=httpx.MockTransport(handler))
         client.ask({}, {"a": noul("q?")}, usage=Usage())
         client.ask({}, {"a": noul("q?")}, usage=Usage())          # 0.02 spent: limit now reached
@@ -178,12 +178,15 @@ class ProviderTest(unittest.TestCase):
             calls.append(str(request.url))
             return httpx.Response(402)
 
-        client = JevClient(api_key="k", provider="openrouter", cache_dir="")
+        client = JevClient(api_key="k", provider="liquid", cache_dir="")
         client._http = httpx.Client(transport=httpx.MockTransport(handler))
         with self.assertRaises(JevError) as ctx:
             client.ask({}, {"a": noul("q?")}, usage=Usage())
-        self.assertIn("OpenRouter", str(ctx.exception))
-        self.assertEqual(set(calls), {"https://openrouter.ai/api/alpha/decisions"})
+        self.assertIn("Liquid AI", str(ctx.exception))
+        self.assertEqual(ctx.exception.kind, "credits")
+        self.assertEqual(set(calls), {"https://api.liquid.ai/decisions/v1/systemone"})
+        from intentsql.jev import connection_state
+        self.assertEqual(connection_state("liquid", "d1").state, "no_credits")
 
     def test_provider_selection_from_configuration(self):
         import os
@@ -193,12 +196,14 @@ class ProviderTest(unittest.TestCase):
         from intentsql import config
         with tempfile.TemporaryDirectory() as tmp:
             base = {"INTENTSQL_WORKSPACE": tmp, "INTENTSQL_NO_DOTENV": "1", "XDG_CONFIG_HOME": tmp,
-                    "SYSTEM_ONE_API_KEY": "", "TYPESAFE_API_KEY": "", "OPENROUTER_API_KEY": "",
-                    "OPENJEV_API_KEY": "", "INTENTSQL_PROVIDER": ""}
-            cases = [({"OPENJEV_API_KEY": "j", "OPENROUTER_API_KEY": "o"}, "openrouter"),
-                     ({"OPENJEV_API_KEY": "j"}, "openjev"),
-                     ({"OPENROUTER_API_KEY": "o", "INTENTSQL_PROVIDER": "openjev"}, "openjev"),
-                     ({"INTENTSQL_PROVIDER": "mock"}, "mock")]
+                    "SYSTEM_ONE_API_KEY": "", "TYPESAFE_API_KEY": "", "LIQUID_API_KEY": "",
+                    "INTENTSQL_PROVIDER": "", "INTENTSQL_MODEL": ""}
+            cases = [({"LIQUID_API_KEY": "l", "SYSTEM_ONE_API_KEY": "t"}, "typesafe"),
+                     ({"LIQUID_API_KEY": "l"}, "liquid"),
+                     ({}, ""),                                     # nothing selected: never demo
+                     ({"SYSTEM_ONE_API_KEY": "t", "INTENTSQL_PROVIDER": "liquid"}, "liquid"),
+                     ({"INTENTSQL_PROVIDER": "mock"}, "demo"),
+                     ({"INTENTSQL_PROVIDER": "openrouter"}, "")]   # no longer supported
             for env, expected in cases:
                 with self.subTest(env=env), mock.patch.dict(os.environ, {**base, **env}):
                     config.settings.cache_clear()

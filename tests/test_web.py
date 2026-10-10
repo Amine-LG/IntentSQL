@@ -16,7 +16,7 @@ class WebTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = mock.patch.dict(os.environ, {"INTENTSQL_WORKSPACE": self.tmp.name,
                                                 "SYSTEM_ONE_API_KEY": "", "TYPESAFE_API_KEY": "",
-                                                "OPENROUTER_API_KEY": "", "OPENJEV_API_KEY": "",
+                                                "LIQUID_API_KEY": "",
                                                 "INTENTSQL_PROVIDER": "", "XDG_CONFIG_HOME": self.tmp.name,
                                                 "INTENTSQL_NO_DOTENV": "1"})
         self.env.start()
@@ -76,21 +76,25 @@ class WebTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_connection_key_is_saved_privately_and_never_returned(self):
-        response = self.client.post("/api/connection", json={"provider": "typesafe", "api_key": "secret-key"})
+        response = self.client.post("/api/connection", json={"provider": "typesafe",
+                                                             "api_key": "secret-key-0123456789"})
         data = response.json()
-        self.assertEqual((data["provider"], data["model"], data["has_key"]), ("typesafe", "jev-latest", True))
-        self.assertNotIn("secret-key", response.text)
-        switched = self.client.post("/api/connection", json={"provider": "openrouter",
-                                                             "api_key": "other-secret"}).json()
-        self.assertEqual((switched["provider"], switched["model"]), ("openrouter", "typesafe/jev-1.13"))
-        self.assertEqual({p["name"] for p in switched["providers"] if p["has_key"]},
-                         {"typesafe", "openrouter", "mock"})
+        self.assertEqual((data["provider"], data["active"]["model"], data["active"]["has_key"]),
+                         ("typesafe", "jev-latest", True))
+        self.assertNotIn("secret-key-0123456789", response.text)
+        switched = self.client.post("/api/connection", json={"provider": "liquid", "model": "d1:free",
+                                                             "api_key": "liquid_other-secret-key"}).json()
+        self.assertEqual((switched["provider"], switched["active"]["model"]), ("liquid", "d1:free"))
+        self.assertEqual(switched["active"]["state"], "untested")            # never 'connected' untested
+        self.assertEqual({p["name"] for p in switched["providers"] if p["has_key"]}, {"typesafe", "liquid"})
         self.assertNotIn("other-secret", self.client.get("/api/connection").text)
-        self.assertEqual(self.client.get("/api/health").json()["provider"], "openrouter")
-        self.assertNotIn("secret-key", self.client.get("/api/connection").text)
+        self.assertEqual(self.client.get("/api/health").json()["provider"], "liquid")
+        back = self.client.post("/api/connection", json={"provider": "typesafe"}).json()
+        self.assertEqual(back["active"]["model"], "jev-latest")      # the Liquid model does not follow
+        self.assertEqual(self.client.post("/api/connection", json={"api_key": "short"}).status_code, 400)
         path = Path(self.tmp.name) / "connection.json"
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        bad = self.client.post("/api/connection", json={"url": "http://example.com"})
+        bad = self.client.post("/api/connection", json={"provider": "openrouter"})
         self.assertEqual(bad.status_code, 400)
 
     def test_ask_requires_a_key_then_answers(self):

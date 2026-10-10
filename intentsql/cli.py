@@ -179,18 +179,19 @@ def _run_suite(args: argparse.Namespace) -> int:
 
 
 def cmd_provider(args: argparse.Namespace) -> int:
-    """Show the active provider; optionally check the account and send one tiny decision."""
+    """Show the selected model provider; optionally send one tiny decision to test it."""
     from intentsql.config import settings
     from intentsql.jev import JevError, Usage, choice, noul, score, shared_client
     cfg = settings()
     client = shared_client()
     info = client.describe()
-    print(f"provider: {info['label']} [{info['provider']}] (requested: {cfg.provider_requested})")
-    print(f"endpoint: {info['url'] or '-'}  model: {info['model']}  key: {'set' if info['has_key'] else 'missing'}")
-    print(f"keys available for: {', '.join(cfg.keys_present) or 'none'}")
-    if args.balance and info["provider"] == "openrouter" and info["has_key"]:
-        print(_openrouter_balance(cfg.key_for("openrouter")))
-    if args.ping:
+    if cfg.notice:
+        print(cfg.notice)
+    print(f"provider: {info['label']} [{info['provider'] or 'none'}]"
+          f"{' (set by INTENTSQL_PROVIDER)' if cfg.locked_by_environment else ''}")
+    print(f"model: {info['model'] or '-'}  key: {'set' if info['has_key'] else 'missing'}  "
+          f"keys saved for: {', '.join(k for k in cfg.keys_present if k != 'demo') or 'none'}")
+    if args.test:
         usage = Usage()
         try:
             answers = client.ask({"ticket": "I was charged twice for one subscription."}, {
@@ -199,62 +200,30 @@ def cmd_provider(args: argparse.Namespace) -> int:
                 "urgency": score("How urgent is `ticket`?", ["routine", "soon", "blocked now"]),
                 "refund": noul("Is `ticket` asking for money back?")}, usage=usage)
         except JevError as exc:
-            print(f"ping failed: {exc}")
+            print(f"test failed: {exc}")
             return 1
-        print(f"ping: choice={answers['team'].choice} score={answers['urgency'].score} "
-              f"noul={answers['refund'].p:.2f} model={','.join(usage.models)} "
-              f"tokens={usage.input_tokens}/{usage.output_tokens} cost=${usage.cost_usd:.6f}")
+        print(f"test passed: choice={answers['team'].choice} score={answers['urgency'].score} "
+              f"noul={answers['refund'].p:.2f} model={','.join(usage.models) or info['model']} "
+              f"input tokens={usage.input_tokens}")
     return 0
 
 
-def _openrouter_balance(key: str) -> str:
-    """Account balance from OpenRouter's key endpoint (no model call, no cost)."""
-    import httpx
-    try:
-        response = httpx.get("https://openrouter.ai/api/v1/key",
-                             headers={"Authorization": f"Bearer {key}"}, timeout=15)
-        data = response.json().get("data", {}) if response.status_code == 200 else {}
-    except (httpx.HTTPError, ValueError):
-        data = {}
-    if not data:
-        return "balance: unavailable"
-    fields = {k: data.get(k) for k in ("usage", "limit", "limit_remaining", "is_free_tier")}
-    try:
-        credits = httpx.get("https://openrouter.ai/api/v1/credits",
-                            headers={"Authorization": f"Bearer {key}"}, timeout=15)
-        totals = credits.json().get("data", {}) if credits.status_code == 200 else {}
-    except (httpx.HTTPError, ValueError):
-        totals = {}
-    if totals:
-        fields["total_credits"] = totals.get("total_credits")
-        fields["total_usage"] = totals.get("total_usage")
-    return "balance: " + ", ".join(f"{k}={v}" for k, v in fields.items())
-
-
 def cmd_keys(args: argparse.Namespace) -> int:
-    """Store provider keys in ~/.config/intentsql/providers.env (0600), typed without echo."""
+    """Save a provider's API key in the IntentSQL workspace (owner-only), typed without echo."""
     import getpass
-    import os
 
-    from intentsql.config import _read_env_file, config_dir
-    path = config_dir() / "providers.env"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
-    values = _read_env_file(path) if path.is_file() else {}
-    for variable, label in (("OPENROUTER_API_KEY", "OpenRouter"), ("OPENJEV_API_KEY", "OpenJEV"),
-                            ("SYSTEM_ONE_API_KEY", "TypeSafe direct")):
-        entered = getpass.getpass(f"{label} API key (Enter to {'keep' if values.get(variable) else 'skip'}): ")
-        if entered.strip():
-            values[variable] = entered.strip()
-    if args.provider:
-        values["INTENTSQL_PROVIDER"] = args.provider
-    fd = os.open(path.with_suffix(".tmp"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write("".join(f"{k}={v}\n" for k, v in values.items()))
-    os.replace(path.with_suffix(".tmp"), path)
-    os.chmod(path, 0o600)
-    stored = [k for k in values if k.endswith("_API_KEY")]
-    print(f"Saved {', '.join(stored) or 'no keys'} to {path} (owner-only). Keys are not shown.")
+    from intentsql.providers import PROVIDERS
+    from intentsql.workspace import WorkspaceError, save_connection
+    info = PROVIDERS[args.provider]
+    key = "" if info.offline else getpass.getpass(
+        f"{info.label} {info.model_label} API key ({info.key_help}): ").strip()
+    try:
+        save_connection(provider=args.provider, api_key=key or None)
+    except WorkspaceError as exc:
+        print(exc)
+        return 1
+    print(f"{info.label} {info.model_label} selected" + (" and its key saved (not shown)." if key else "."))
+    print("Run 'intent-sql provider --test' to check the connection.")
     return 0
 
 
@@ -309,13 +278,12 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--show-failures", action="store_true")
     bench.set_defaults(func=_guarded(cmd_benchmark))
 
-    keys = sub.add_parser("keys", help="enter provider API keys (hidden input, stored owner-only)")
-    keys.add_argument("--provider", choices=("auto", "openrouter", "typesafe", "openjev", "mock"))
+    keys = sub.add_parser("keys", help="choose a model provider and save its API key (hidden input)")
+    keys.add_argument("provider", choices=("typesafe", "liquid", "demo"))
     keys.set_defaults(func=cmd_keys)
 
-    prov = sub.add_parser("provider", help="show the active Jev provider; check balance or ping it")
-    prov.add_argument("--balance", action="store_true", help="OpenRouter: show credits (free call)")
-    prov.add_argument("--ping", action="store_true", help="send one tiny choice/score/noul decision")
+    prov = sub.add_parser("provider", help="show the selected model provider; --test sends one tiny decision")
+    prov.add_argument("--test", action="store_true", help="send one tiny choice/score/noul decision")
     prov.set_defaults(func=cmd_provider)
 
     serve = sub.add_parser("serve", help="start the web app")

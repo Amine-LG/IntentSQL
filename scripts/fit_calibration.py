@@ -1,6 +1,6 @@
 """Fit a confidence calibration table for one provider from its Spider *train* reports.
 
-    python scripts/fit_calibration.py openrouter ../IntentSQL-artifacts/v1-runs/openrouter/train-*.json
+    python scripts/fit_calibration.py liquid ../IntentSQL-artifacts/v1-runs/liquid/train-*.json
 
 Prints a table (score lower bound, observed accuracy) by isotonic regression of
 the score (verification - 0.2 x alternatives) on execution accuracy, to be added

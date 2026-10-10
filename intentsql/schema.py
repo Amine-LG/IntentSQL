@@ -471,7 +471,7 @@ def _profile_kind(declared_kind: str | None, sample: list[object]) -> str:
         return NUMBER
     if declared_kind == NUMBER and numeric >= 0.5 * len(values):
         return NUMBER
-    return TEXT if declared_kind in (None, TEXT, OTHER, NUMBER) else declared_kind
+    return TEXT if declared_kind is None or declared_kind in (TEXT, OTHER, NUMBER) else declared_kind
 
 
 def _storage(sample: list[object]) -> str:

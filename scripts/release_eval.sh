@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Release evaluation, in protocol order (docs/EVALUATION.md), for ONE provider.
 #
-#   scripts/release_eval.sh openrouter            # or openjev / typesafe
-#   STEPS="check smoke" scripts/release_eval.sh openrouter
+#   scripts/release_eval.sh liquid                # or typesafe
+#   STEPS="check smoke" scripts/release_eval.sh liquid
 #
 # Every report goes to ../IntentSQL-artifacts/v1-runs/<provider>/ and records the provider,
 # model and code revision.  Nothing falls back to another provider: if the provider fails,
@@ -10,7 +10,7 @@
 # Cost guard: INTENTSQL_BUDGET_USD (default 3) stops requests once reported spend reaches it.
 set -euo pipefail
 
-provider="${1:?usage: release_eval.sh <openrouter|openjev|typesafe>}"
+provider="${1:?usage: release_eval.sh <typesafe|liquid>}"
 steps="${STEPS:-check smoke dev-suites train dev holdout test}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/../IntentSQL-artifacts/v1-runs/$provider"
@@ -25,7 +25,7 @@ echo "provider=$provider budget=\$$INTENTSQL_BUDGET_USD steps=$steps"
 
 for step in $steps; do
   case "$step" in
-    check)      run provider --balance --ping ;;
+    check)      run provider --test ;;
     smoke)      run benchmark --suite "$root/benchmarks/suites/smoke.json" --show-failures --out "$out/smoke-$stamp.json" ;;
     dev-suites) run benchmark --suite "$root/benchmarks/suites/features.json" --show-failures --out "$out/features-$stamp.json"
                 run benchmark --suite "$root/benchmarks/suites/adversarial.json" --show-failures --out "$out/adversarial-$stamp.json" ;;

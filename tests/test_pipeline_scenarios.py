@@ -204,7 +204,7 @@ class ScenarioTest(unittest.TestCase):
         jev.provider = PROVIDERS["typesafe"]
         calibrated_result = answer(self.db, "What are the customer names?", client=jev)
         self.assertLess(calibrated_result.confidence, 0.5)      # more likely wrong than right
-        jev.provider = PROVIDERS["openrouter"]                   # same model family, not yet calibrated
+        jev.provider = PROVIDERS["liquid"]                       # another model: not calibrated
         self.assertIsNone(answer(self.db, "What are the customer names?", client=jev).confidence)
 
     def test_calibration_is_monotone_and_penalizes_alternatives(self):
