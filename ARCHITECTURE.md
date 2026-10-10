@@ -25,7 +25,9 @@ request ──► grounding ──► candidates ──► Jev: one parallel rou
 | `schema.py` | Introspection: tables, columns, kinds, storage classes, value statistics, declared and inferred foreign keys (composite keys, `<table>_id`, role names, self-references), role tables, bridge detection, join trees, FK equivalence |
 | `grounding.py` | Literals (quoted values, stored values, numbers, dates, periods, demonyms, fuzzy matches); lexical links from request words to tables and columns |
 | `measures.py` | Derived columns that a request may mean but the schema does not store: products (quantity × price), differences and durations, sums, ratios, date periods (year, month, weekday) |
-| `interpret.py` | Candidate generation, the decision questions, assembly of answers into an `Intent`, follow-up questions, one-flip alternatives |
+| `cues.py`, `candidates.py`, `questions.py` | Cue words; candidate generation (every option offered to Jev, built from the schema and literals); the bounded questions and shared decision state |
+| `interpret.py` | The decision rounds, deterministic assembly of answers into an `Intent`, follow-up questions, one-flip alternatives |
+| `providers.py`, `mock.py` | Jev providers (OpenRouter, TypeSafe direct, OpenJEV) and the offline mock |
 | `intent.py` | The semantic plan (`Intent`, `OutputItem`, `Condition`, `Ordering`) and the deterministic translation to IR |
 | `ir.py` | Typed relational IR: expressions, conditions, joins, FROM subqueries, window functions, set operations |
 | `compiler.py` | IR → SQLite SQL with bound parameters; structural validation (unknown objects, aggregates in WHERE, set-width mismatches, unnamed derived columns …) |

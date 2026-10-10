@@ -46,6 +46,7 @@ IntentSQL targets **SQLite**. It produces one read-only `SELECT` statement per q
 |---|---|
 | Products, differences, sums and ratios of stored columns | "revenue" = quantity × unit price, "total checking and savings balance" |
 | Date differences | "the longest stay" (days between check-in and check-out) |
+| Across aggregation levels | "how much budget does each department have left after paying salaries" (budget − SUM(salary)) |
 | Elapsed time to a reference date | "how many years had each employee worked by the end of 2024", "how old is each patient" (as of today, which the explanation states) |
 | Column vs column | "candidates with a lower support rate than oppose rate", "reviewers with the same name as the director" |
 
@@ -86,10 +87,9 @@ These are measured or observed, not hypothetical:
   - grouping keys;
   - Spider's own conventions, such as whether to show the ranking value, DISTINCT, and gold errors.
 - **Not supported:**
-  - arithmetic across aggregation levels ("budget left after paying salaries" = budget − SUM(salary));
   - other expressions with constants ("prices after a 10% discount");
   - arbitrary nesting of AND/OR beyond IN-lists and grouped name pairs;
-  - UNION of two differently filtered queries (except "either of two people");
+  - UNION of two differently filtered row queries (supported: "either of two people", and aggregate conditions over different related tables);
   - recursive hierarchies (all reports under a manager, at any depth).
 - **Derived measures** are proposed only from cue words and column names, for example revenue, value, spending, duration, difference, combined. A metric with an unusual name ("GMV") is not recognized.
 - **Relative dates** use the computer's current date. On historical data they correctly return nothing, and the explanation says so.
