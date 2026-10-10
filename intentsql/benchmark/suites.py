@@ -17,9 +17,9 @@ from typing import Any
 
 from intentsql.benchmark.exec_match import execute, order_matters, results_equivalent
 from intentsql.benchmark.runner import ANSWERED, ERROR, REFUSED, Prediction, System
-from intentsql.config import PROJECT_ROOT
+from intentsql.config import PACKAGE_DIR, PROJECT_ROOT
 
-SEARCH = (PROJECT_ROOT / "benchmarks" / "fixtures", PROJECT_ROOT / "data")
+SEARCH = (PROJECT_ROOT / "benchmarks" / "fixtures", PACKAGE_DIR / "data")
 
 
 @dataclass

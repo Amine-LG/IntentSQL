@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from intentsql import __version__
-from intentsql.config import PROJECT_ROOT, settings
+from intentsql.config import PACKAGE_DIR, settings
 from intentsql.examples import examples
 from intentsql.jev import reset_shared_client, shared_client
 from intentsql.pipeline import answer
@@ -41,7 +41,7 @@ from intentsql.workspace import (
 )
 
 log = logging.getLogger("intentsql.web")
-STATIC_DIR = PROJECT_ROOT / "static"
+STATIC_DIR = PACKAGE_DIR / "static"
 CONSOLE_MAX_ROWS = 500
 CONSOLE_TIMEOUT_S = 5.0
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]", "testserver")

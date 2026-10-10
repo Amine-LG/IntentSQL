@@ -14,10 +14,9 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /data \
     && chown intentsql:intentsql /data
 
-COPY LICENSE README.md ./
+COPY LICENSE README.md pyproject.toml ./
 COPY intentsql ./intentsql
-COPY static ./static
-COPY data ./data
+RUN python -m pip install --no-cache-dir --no-deps .
 
 USER intentsql
 

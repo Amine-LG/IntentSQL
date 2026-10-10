@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = PACKAGE_DIR.parent          # the source checkout (benchmarks, .env); absent when installed
 
 
 def _read_env_file(path: Path) -> dict[str, str]:

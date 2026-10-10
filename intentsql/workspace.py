@@ -19,9 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from intentsql.config import PROJECT_ROOT, settings
+from intentsql.config import PACKAGE_DIR, settings
 
-BUNDLED_DIR = PROJECT_ROOT / "data"
+BUNDLED_DIR = PACKAGE_DIR / "data"
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,120}$")
 _LOCK = threading.Lock()
 MAX_IMPORT_BYTES = 2 * 1024 ** 3

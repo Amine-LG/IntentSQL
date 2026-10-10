@@ -25,4 +25,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --check static/app.js
+      - run: node --check intentsql/static/app.js

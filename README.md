@@ -31,9 +31,9 @@ The app opens with three example databases: Cyberchase, DESE and Moneyball. Use 
 ### Command line
 
 ```bash
-intent-sql ask data/dese.db "Which five districts have the highest per-pupil expenditure?"
-intent-sql ask data/dese.db "How many schools does each district have?" --json --debug
-intent-sql schema data/moneyball.db
+intent-sql ask dese.db "Which five districts have the highest per-pupil expenditure?"
+intent-sql ask dese.db "How many schools does each district have?" --json --debug
+intent-sql schema moneyball.db          # bundled examples by name, or any path to a .sqlite file
 ```
 
 ### Docker
@@ -100,7 +100,7 @@ python benchmarks/fixtures/build_suites.py     # rebuild fixtures and validate e
 | Path | Contents |
 |---|---|
 | `intentsql/` | grounding, interpretation, intent → IR → SQL, verification, Jev client, web API, CLI |
-| `static/` | the web interface (no build step) |
+| `intentsql/static/`, `intentsql/data/` | the web interface (no build step) and the example databases |
 | `tests/` | offline tests with a scripted Jev double |
 | `benchmarks/` | hand-written suites and their fixture databases |
 | `scripts/`, `experiments/` | failure analysis and the experiments recorded in docs/EXPERIMENTS.md |

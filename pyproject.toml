@@ -20,6 +20,9 @@ intent-sql = "intentsql.cli:main"
 [tool.setuptools.packages.find]
 include = ["intentsql*"]
 
+[tool.setuptools.package-data]
+intentsql = ["static/*", "data/*.db"]
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"

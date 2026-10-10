@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ask a SQLite database in plain English. IntentSQL shows what it understood, the SQL it ran and the result.">
+  <title>IntentSQL</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#question">Skip to the question box</a>
+
+<header class="topbar">
+  <button id="toggle-sidebar" class="icon-button only-narrow" type="button" aria-label="Show schema and history" aria-expanded="false" aria-controls="sidebar">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+  <div class="brand">
+    <img src="/static/favicon.svg" alt="" width="22" height="22">
+    <span>IntentSQL</span>
+  </div>
+  <label class="db-picker">
+    <span class="sr-only">Database</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg>
+    <select id="database" aria-label="Database"></select>
+  </label>
+  <div class="top-actions">
+    <button id="open-import" class="button ghost" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M5 20h14"/></svg><span class="hide-narrow">Open database</span>
+    </button>
+    <button id="open-console" class="button ghost hide-narrow" type="button">SQL console</button>
+    <button id="open-settings" class="icon-button" type="button" aria-label="Settings">
+      <span id="conn-dot" class="dot" aria-hidden="true"></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside id="sidebar" class="sidebar" aria-label="Database schema and history">
+    <div class="side-tabs" role="tablist" aria-label="Sidebar">
+      <button id="tab-schema" role="tab" aria-selected="true" aria-controls="panel-schema" type="button">Schema</button>
+      <button id="tab-history" role="tab" aria-selected="false" aria-controls="panel-history" type="button">History</button>
+    </div>
+    <section id="panel-schema" role="tabpanel" aria-labelledby="tab-schema" class="side-panel">
+      <p id="schema-summary" class="muted small"></p>
+      <input id="schema-filter" type="search" placeholder="Find a table or column" aria-label="Find a table or column">
+      <div id="schema-list" class="schema-list"><p class="muted">Loading…</p></div>
+    </section>
+    <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" class="side-panel" hidden>
+      <ul id="history-list" class="history-list"></ul>
+      <p id="history-empty" class="muted small">Questions you ask about this database appear here.</p>
+      <button id="clear-history" class="button ghost small" type="button" hidden>Clear history</button>
+    </section>
+  </aside>
+
+  <main id="main">
+    <section id="welcome" class="card welcome" hidden>
+      <h1>Connect IntentSQL to Jev</h1>
+      <p>IntentSQL turns questions into SQL by asking Jev, TypeSafe's decision model, small grounded questions about your database. Choose a provider (OpenRouter, TypeSafe or OpenJEV) and add its API key to start; the key stays on this computer.</p>
+      <button id="welcome-settings" class="button primary" type="button">Add API key</button>
+    </section>
+
+    <form id="ask-form" class="ask card" autocomplete="off">
+      <label for="question" class="ask-label">Ask about <strong id="db-name">this database</strong></label>
+      <div class="ask-row">
+        <textarea id="question" rows="1" maxlength="2000" placeholder="e.g. Which customers have never placed an order?" required></textarea>
+        <button id="ask" class="button primary" type="submit">Ask</button>
+      </div>
+      <p class="hint muted small"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> to focus</p>
+      <div id="examples" class="examples" aria-label="Example questions"></div>
+    </form>
+
+    <ol id="progress" class="progress" hidden aria-label="Progress">
+      <li data-phase="ground">Reading the question</li>
+      <li data-phase="interpret">Understanding it</li>
+      <li data-phase="compile">Building the query</li>
+      <li data-phase="verify">Double-checking</li>
+      <li data-phase="execute">Running it</li>
+    </ol>
+
+    <article id="answer" class="card answer" hidden aria-live="polite" aria-labelledby="answer-title">
+      <header class="answer-head">
+        <p class="eyebrow">You asked</p>
+        <h2 id="answer-title" class="asked"></h2>
+      </header>
+
+      <section class="understood">
+        <div class="understood-head">
+          <p class="eyebrow">IntentSQL understood</p>
+          <span id="confidence" class="pill"></span>
+        </div>
+        <p id="explanation" class="explanation"></p>
+        <div id="notice" class="notice" hidden></div>
+        <div id="alternatives" class="alternatives" hidden>
+          <p class="eyebrow">Possible readings of the question</p>
+          <ul id="alternative-list"></ul>
+        </div>
+      </section>
+
+      <section id="result-section" class="result-section">
+        <div class="section-head">
+          <p class="eyebrow">Result <span id="row-count" class="muted"></span></p>
+          <div class="section-actions">
+            <button id="copy-result" class="button ghost small" type="button">Copy</button>
+            <button id="export" class="button ghost small" type="button">Download CSV</button>
+          </div>
+        </div>
+        <div id="result" class="result"></div>
+      </section>
+
+      <section id="sql-section" class="sql-section">
+        <div class="section-head">
+          <p class="eyebrow">SQL</p>
+          <div class="section-actions">
+            <button id="copy-sql" class="button ghost small" type="button">Copy</button>
+            <button id="edit-sql" class="button ghost small" type="button">Open in console</button>
+          </div>
+        </div>
+        <pre id="sql" class="sql"><code></code></pre>
+      </section>
+
+      <details id="how" class="how">
+        <summary>How this was answered</summary>
+        <div id="how-body"></div>
+      </details>
+    </article>
+  </main>
+</div>
+
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <form method="dialog" id="settings-form">
+    <h2 id="settings-title">Settings</h2>
+    <fieldset>
+      <legend>Jev provider</legend>
+      <label>Provider
+        <select id="conn-provider"></select>
+      </label>
+      <p id="conn-provider-note" class="muted small"></p>
+      <label>API key for this provider <input id="conn-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+      <p class="muted small">Keys are saved only in your local IntentSQL workspace and are never sent back to the page.</p>
+      <details class="advanced" id="conn-advanced"><summary>Advanced (TypeSafe direct)</summary>
+        <label>Endpoint <input id="conn-url" type="url"></label>
+        <label>Model <input id="conn-model" type="text"></label>
+      </details>
+      <p id="conn-status" class="muted small" role="status"></p>
+    </fieldset>
+    <fieldset>
+      <legend>Display</legend>
+      <label class="inline">Theme
+        <select id="theme-select"><option value="">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+      <label class="check"><input id="developer" type="checkbox"> Show technical details (plans, Jev calls)</label>
+    </fieldset>
+    <div class="dialog-actions">
+      <button value="cancel" class="button ghost">Close</button>
+      <button id="conn-save" class="button primary" value="default">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="import-dialog" aria-labelledby="import-title">
+  <form method="dialog" id="import-form">
+    <h2 id="import-title">Open a SQLite database</h2>
+    <p class="muted small">IntentSQL works on a copy in its workspace and only reads from it. The original file is never changed.</p>
+    <label id="drop-zone" class="drop-zone">
+      <input id="import-file" type="file" accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3">
+      <span><strong>Choose a file</strong> or drop it here</span>
+      <span id="drop-name" class="muted small"></span>
+    </label>
+    <details class="advanced"><summary>Copy from a path on this computer</summary>
+      <label>Path <input id="import-path" type="text" placeholder="/path/to/database.sqlite" spellcheck="false"></label>
+    </details>
+    <p id="import-status" class="muted small" role="status"></p>
+    <div class="dialog-actions">
+      <button id="delete-db" class="button danger ghost" type="button" hidden>Remove current copy</button>
+      <span class="spacer"></span>
+      <button value="cancel" class="button ghost">Close</button>
+      <button id="import-go" class="button primary" value="default">Open</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="console-dialog" class="wide" aria-labelledby="console-title">
+  <form method="dialog" id="console-form">
+    <h2 id="console-title">SQL console</h2>
+    <p class="muted small">Runs read-only SQL directly in SQLite. Statements that change data are rejected.</p>
+    <textarea id="console-sql" rows="6" spellcheck="false" placeholder="SELECT * FROM table LIMIT 20"></textarea>
+    <p id="console-error" class="error" hidden></p>
+    <div id="console-table" class="result"></div>
+    <div class="dialog-actions">
+      <button value="cancel" class="button ghost">Close</button>
+      <button id="console-run" class="button primary" value="default">Run</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<footer class="footer muted small">IntentSQL shows its reading of every question. Check results that matter: interpretations can be wrong.</footer>
+</body>
+</html>

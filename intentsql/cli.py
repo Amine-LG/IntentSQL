@@ -24,9 +24,21 @@ def _print_table(columns: list[str], rows: list[tuple[Any, ...]], limit: int = 3
         print(f"... {len(rows) - limit} more rows")
 
 
+def _database(name: str) -> Path:
+    """A SQLite file path, or the name of a bundled or imported database ('dese.db')."""
+    path = Path(name).expanduser()
+    if path.is_file():
+        return path
+    from intentsql.workspace import WorkspaceError, resolve_database
+    try:
+        return resolve_database(name).path
+    except WorkspaceError:
+        raise SystemExit(f"No such database: {name}") from None
+
+
 def cmd_ask(args: argparse.Namespace) -> int:
     from intentsql.pipeline import answer
-    result = answer(args.database, args.question)
+    result = answer(_database(args.database), args.question)
     if args.json:
         print(json.dumps(result.to_dict(debug=args.debug), indent=1, default=str))
         return 0 if result.status == "answered" else 1
@@ -50,7 +62,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def cmd_schema(args: argparse.Namespace) -> int:
     from intentsql.schema import load_schema
-    schema = load_schema(args.database)
+    schema = load_schema(_database(args.database))
     for table in schema.tables.values():
         cols = ", ".join(f"{c.name}:{c.kind}{'*' if c.primary_key else ''}" for c in table.columns)
         print(f"{table.name} ({table.row_count} rows): {cols}")
