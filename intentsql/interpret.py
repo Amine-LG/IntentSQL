@@ -1292,6 +1292,7 @@ def assemble(g: Grounding, cands: Candidates, answers: dict[str, Answer],
         distinct = False
 
     followup: dict[str, Question] = {}
+    conditions = _drop_reference_dates(schema, outputs, order, conditions)
     outputs = _resolve_count_sum(schema, outputs, group_by, answers, followup, record)
     outputs, conditions = _percentage(g, outputs, conditions, subject, answers, followup, record)
     keep_empty = bool(KEEP_EMPTY_CUE.search(g.question) and group_by and any(
@@ -1494,6 +1495,23 @@ def _retarget_self_counts(g: Grounding, cands: Candidates, answers: dict[str, An
                   if c.kind == "having" and c.table == subject and not c.column else c
                   for c in conditions]
     return order, conditions, outputs
+
+
+def _drop_reference_dates(schema: Schema, outputs: list[OutputItem], order: tuple[Ordering, ...],
+                          conditions: list[Condition]) -> list[Condition]:
+    """'years worked by the end of 2024': the year is the reference date of the elapsed
+    time being computed, not a filter on a date column."""
+    years = set()
+    for key in [o.column for o in outputs if o.column] + [o.column for o in order if o.column]:
+        formula = schema.column(key).formula
+        if formula and formula[0].startswith("since_") and formula[2].startswith("lit:"):
+            years.add(int(formula[2][4:8]))
+    if not years:
+        return conditions
+    return [c for c in conditions if not (
+        c.kind == "compare" and c.column and c.values and c.values[0] in years
+        and (schema.column(c.column).kind == DATE or "year" in schema.column(c.column).label
+             or schema.column(c.column).formula is not None))]
 
 
 def _percentage(g: Grounding, outputs: list[OutputItem], conditions: list[Condition],

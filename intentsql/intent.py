@@ -21,6 +21,7 @@ from intentsql.text import lemma
 TEXT_OPS = {"contains": "%{}%", "starts": "{}%", "ends": "%{}"}
 # Filters through one-to-many relationships are membership tests (no repeated rows).
 SEMI_JOIN_FILTERS = os.environ.get("INTENTSQL_SEMI_JOIN", "1") != "0"
+ELAPSED_UNITS = {"years": 365.25, "months": 30.4375, "days": 1.0}
 DATE_PARTS = {"year": "%Y", "month": "%Y-%m", "day": "%Y-%m-%d", "weekday": "%w", "hour": "%H"}
 FUNC_WORDS = {"COUNT": "number of", "SUM": "total", "AVG": "average", "MIN": "minimum",
               "MAX": "maximum", "PCT": "percentage of"}
@@ -207,6 +208,13 @@ class _Scope:
             op, left, right = column.formula
             if op in DATE_PARTS:
                 return ir.Func("STRFTIME", (ir.Lit(DATE_PARTS[op]), self.col(left)))
+            if op.startswith("since_"):
+                reference = right.split(":", 1)[1]
+                days = ir.BinOp("-", ir.Func("JULIANDAY", (ir.Lit(reference),)),
+                                ir.Func("JULIANDAY", (self.col(left),)))
+                divisor = ELAPSED_UNITS[op.removeprefix("since_")]
+                return days if divisor == 1 else ir.Func("ROUND", (ir.BinOp("/", days, ir.Lit(divisor)),
+                                                                   ir.Lit(1)))
             a, b = self.col(left), self.col(right)
             if op == "-" and self.schema.column(left).kind == DATE:
                 a, b = ir.Func("JULIANDAY", (a,)), ir.Func("JULIANDAY", (b,))

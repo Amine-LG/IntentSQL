@@ -76,6 +76,17 @@ class MeasureTest(unittest.TestCase):
         self.assertIn("JULIANDAY", result.sql)
 
 
+    def test_elapsed_time_to_a_stated_reference_date(self):
+        # Ann stayed from 2024-01-01: 365 days by the end of 2024 (2024-12-31).
+        result = self.ask(self.db, "How many days had each guest stayed since check in by the end of 2024?", [
+            ("^out_", "show the stay guest in", "itself"),
+            ("^out_", "days since check in date", "itself"),
+            ("^role_", r"\[2024\]", "filtered by|compared")])
+        self.assertIn("2024-12-31", result.sql if "?" not in result.sql else result.display_sql)
+        self.assertEqual(sorted(result.rows)[0], ("Ann", 365.0))
+        self.assertNotIn("STRFTIME", result.sql)            # 2024 is the reference, not a filter
+
+
 class SelfReferenceTest(unittest.TestCase):
     """employees.manager_id (undeclared) is a self-reference: the manager is a role table."""
 

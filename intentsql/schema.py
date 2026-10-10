@@ -160,7 +160,9 @@ class Schema:
         column = self.column(key)
         if column.formula is None:
             return (column.table,)
-        _, left, right = column.formula
+        op, left, right = column.formula
+        if op.startswith("since_"):           # right is a reference date, not a column
+            return tuple(dict.fromkeys((column.table,) + self.requires(left)))
         return tuple(dict.fromkeys((column.table,) + self.requires(left) + self.requires(right)))
 
     @cached_property

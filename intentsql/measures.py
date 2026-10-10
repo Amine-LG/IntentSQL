@@ -105,6 +105,8 @@ def derive(question: str, schema: Schema, column_link: dict[str, float],
                 for date in dates[:3]:
                     proposals.append((part, date.key, date.key, f"{date.label} {part}"))
 
+    proposals += _elapsed(question, schema, column_link)
+
     columns: list[Column] = []
     seen: set[tuple[str, str, str]] = set()
     for op, left_key, right_key, label in proposals:
@@ -121,6 +123,49 @@ def derive(question: str, schema: Schema, column_link: dict[str, float],
     return columns
 
 
+ELAPSED_CUE = re.compile(r"\b(how old|ages?\b|years? (?:since|ago|old|of service)|how long ago|tenure|"
+                         r"seniority|how many (?:years|months|days)\b|(?:years|months|days) (?:has|have|had)\b)",
+                         re.I)
+BIRTH = re.compile(r"\b(birth|born|dob)\b", re.I)
+_REFERENCE = re.compile(r"\b(?:by|at|until|till|as of|on|in) (?:the )?(end|start|beginning) of (\d{4})\b|"
+                        r"\b(?:as of|by|until|on) (\d{4}-\d{2}-\d{2})\b|\b(?:as of|by|until|in) (\d{4})\b", re.I)
+
+
+def _elapsed(question: str, schema: Schema, column_link: dict[str, float]) -> list[tuple[str, str, str, str]]:
+    """'how old is each patient', 'how many years had each employee worked by the end of
+    2024': time elapsed from a stored date to a reference date stated in the request
+    (or today, which the label then says)."""
+    if not ELAPSED_CUE.search(question):
+        return []
+    if re.search(r"\bages?\b", question, re.I) and any(c.label == "age" for c in schema.columns) \
+            and not re.search(r"\bhow (?:many|long)\b", question, re.I):
+        return []                     # the schema stores an age; nothing to derive
+    unit = next((u for u in ("months", "days") if re.search(rf"\b{u}\b", question, re.I)), "years")
+    reference, origin = _reference(question)
+    dates = [c for c in schema.columns if c.kind == DATE and c.formula is None]
+    dates.sort(key=lambda c: (-column_link.get(c.key, 0), not BIRTH.search(c.label),
+                              not START.search(c.label)))
+    proposals = []
+    for date in dates[:3]:
+        what = "age" if BIRTH.search(date.label) and unit == "years" else f"{unit} since {date.label}"
+        proposals.append((f"since_{unit}", date.key, f"{origin}:{reference}",
+                          f"{what} (as of {reference}{', today' if origin == 'today' else ''})"))
+    return proposals
+
+
+def _reference(question: str) -> tuple[str, str]:
+    """The reference date of an elapsed-time question, and whether the request stated it."""
+    from datetime import date
+    m = _REFERENCE.search(question)
+    if m and m.group(2):
+        return (f"{m.group(2)}-12-31" if m.group(1).lower() == "end" else f"{m.group(2)}-01-01"), "lit"
+    if m and m.group(3):
+        return m.group(3), "lit"
+    if m and m.group(4):
+        return f"{m.group(4)}-12-31", "lit"
+    return date.today().isoformat(), "today"
+
+
 def _close(schema: Schema, a: str, b: str) -> bool:
     if a == b:
         return True
@@ -132,7 +177,7 @@ def _host(schema: Schema, left: str, right: str) -> str:
     """The table a measure belongs to: the 'many' side when operands are in two tables
     (an order line's value, not a product's), so joining it never repeats rows."""
     a, b = left.split(".")[0], right.split(".")[0]
-    if a == b:
+    if a == b or ":" in right:            # a constant (elapsed time): the date's own table
         return a
     return b if schema.one_to_many(a, b) else a
 
