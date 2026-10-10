@@ -26,6 +26,21 @@ CI (`.github/workflows/ci.yml`) has read-only permissions and uses no secrets. O
 
 `.pre-commit-config.yaml` offers the same gitleaks check as a local pre-commit hook.
 
+## Release audit (2026-10-10, 1.0.0)
+
+The 1.0.0 work used a real TypeSafe key for live evaluation. This audit was repeated after that work, without printing the key.
+
+| Check | Result |
+|---|---|
+| The live key in any Git object (all 890 blobs, commits and tags, on all branches and tags, reachable or not), in full or its first 24 characters | 0 matches |
+| The live key in the working tree (except the git-ignored `.env`), evaluation reports, the response cache (4,199 files) and server logs | 0 matches |
+| gitleaks 8.21.2, all 59 commits and the working tree | No leaks (only the allowlisted fake test keys) |
+| detect-secrets 1.5.0 | Only fake test keys, and the developer's git-ignored `.env` |
+| pip-audit 2.7.3 (pinned runtime and development requirements) | No known vulnerabilities |
+| bandit 1.8.6 | No high-severity findings; the same eight medium SQL-string findings, each reviewed: identifiers from the schema, quoted, read-only |
+| Wheel, sdist and Docker context | No `.env`, settings, keys, ledger or reports (checked by listing their contents) |
+| Spending | A cumulative ledger capped live calls at $2.50, against a mission cap of $3.00. Actual: $0.79 at the listed price ($0.867 counted by the conservative ledger) |
+
 ## Pre-release audit (2026-10-10, 1.0.0-beta.1)
 
 Scope:

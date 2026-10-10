@@ -1,44 +1,38 @@
-# Release checklist: 1.0.0-beta.1
+# Release checklist: 1.0.0
 
-Status as of 2026-10-10. ✅ done and verified locally · ⏳ needs a working decision-model key or credits · 👤 needs the owner's action.
+Status as of 2026-10-10. ✅ verified locally · ⏳ needs GitHub (nothing is pushed) · 👤 owner's action.
 
-## Software (verified offline)
+A stable 1.0 does not answer every question. It must reliably deliver a documented scope (docs/CAPABILITIES.md), fail safely and visibly outside it, and say honestly how often it is wrong.
 
-| Item | Status | Evidence |
+## Stable release criteria
+
+| Criterion | Status | Evidence |
 |---|---|---|
-| Grounding, typed IR, compiler, read-only execution | ✅ | Offline test suite with a scripted decision-model double |
-| Providers: TypeSafe Jev, Liquid AI d1, explicit demo mode; no hidden fallback | ✅ | tests/test_jev_client.py, tests/test_web.py |
-| Model setup and connection states (not configured, ready to test, connected only after a real answer, key rejected, no credits, unavailable, incompatible, demo, locked by environment) | ✅ | Browser-tested in a clean environment; the Liquid key-rejected path was checked against the real endpoint with an invalid key |
-| Keys server-side only (0600 file, never returned, never in `localStorage`) | ✅ | tests/test_web.py, tests/test_custom_models.py; the browser page and API responses were checked for the key after saving |
-| Custom decision models: add, test, select, edit, remove; compatibility test per decision type; *Incompatible* state; HTTPS rule; key dropped on host change; never demo on failure or removal | ✅ | tests/test_custom_models.py (mock transport); scripts/smoke.sh (real HTTP, local protocol stub and chat-style API); browser-tested, desktop and mobile, light and dark |
-| Decision inspector (found, decided, planned, checked, SQL and data); no probabilities shown in demo mode | ✅ | Browser-tested, desktop and 390 px mobile, light and dark |
-| Evaluations stop on fatal provider errors | ✅ | tests/test_benchmark_eval.py (`INTERRUPTED`, no report) |
-| CLI (`ask`, `schema`, `benchmark`, `serve`, `keys`, `provider`, `custom`, `--version`) | ✅ | scripts/smoke.sh |
-| Packaging: wheel and sdist build without warnings; clean install in a fresh Python 3.12 venv; UI, example data and data notice included | ✅ | Local run of the CI `package` job steps |
-| Docker: builds, runs as non-root, health check, demo answer | ✅ | Local run of the CI `docker` job steps |
-| Secret scan, dependency audit, code scan | ✅ | docs/SECURITY.md |
-| ruff, mypy, `node --check` | ✅ | Clean |
-| GitHub Actions CI | ⏳ | Workflow written and its steps run locally; it has never run on GitHub (nothing is pushed) |
+| Installs cleanly | ✅ | Wheel and sdist build without warnings; fresh Python 3.12 venv install; `scripts/smoke.sh` from outside the source tree |
+| Real-model integration works | ✅ | Live TypeSafe `jev-1.13.0`: authentication; Choice, Noul and Score answers parsed; live smoke suite 15/15 (one case per SQL category) |
+| Model selection works; no silent demo fallback | ✅ | tests/test_web.py, tests/test_custom_models.py; browser: setup → Test connection → *Connected*; no key → visible error, never demo |
+| Supported SQL behaves correctly | ✅ | Capability suite 94.6% (live); offline scenario tests (152 tests in total) |
+| Read-only execution | ✅ | Read-only connections, row and time limits, writes refused (tests); console rejects writes |
+| Errors and recovery | ✅ | Fatal provider errors stop evaluations without results (`INTERRUPTED`); the UI shows the failed step and the provider's message |
+| No regressions | ✅ | Identical historical questions: Spider train 76.8% (historically 75.8%), Spider dev 76.7% (historically 76.8%); one development regression fixed with a test |
+| Generalization to unfamiliar schemas | ✅ | Held-out clinic suite, run once on frozen code: 93.3% (42/45, interval 82–98%); Spider test sample, 600 questions on test databases: 78.0% |
+| Honest uncertainty | ✅ | Calibration checked on 600 fresh live answers (each bin within 3 points); uncertain answers flagged with alternatives; per-decision probabilities shown apart from confidence; demo mode shows none |
+| No high-severity security issues | ✅ | docs/SECURITY.md: secret scans, key-value scan of all Git objects and artifacts, dependency audit, code scan, earlier independent review fixed |
+| Accurate documentation | ✅ | README, INSTALL, ARCHITECTURE, CAPABILITIES, EVALUATION (every run, with seeds), CUSTOM_MODELS, SECURITY, CHANGELOG, RELEASE_NOTES |
+| UI and CLI work | ✅ | Browser: desktop and 390 px mobile, dark and light, first run, model setup, a live answer, decision inspector, alternatives, error state, keyboard; no console errors. CLI: `ask`, `schema`, `benchmark`, `serve`, `keys`, `provider`, `custom`, `--version` |
+| Reproducible build and artifacts | ✅ | Pinned requirements; Docker image builds and runs as non-root; package includes the UI, example data and its licence notice |
+| GitHub Actions CI | ⏳ | Workflow written; each job's steps run locally. It has never run on GitHub; Windows untested |
 
-## Measurements
+## Known limitations (documented, not blockers)
 
-| Item | Status | Notes |
-|---|---|---|
-| Historical TypeSafe Jev results (Spider dev 76.8% ± 2.6) | ✅ | Code from 2026-10-09; docs/EVALUATION.md#results |
-| TypeSafe Jev on this build | ⏳ | HTTP 402 (no credits) |
-| Liquid AI d1: connection check, smoke, development suites | ⏳ | No key was available |
-| Liquid AI d1 calibration table | ⏳ | Fit from its train runs (`scripts/fit_calibration.py`) before quoting its confident-answer accuracy |
-| Frozen held-out suite; Spider test milestone | ⏳ | Run once, on frozen code |
+- Accuracy is 71–78% on Spider-style questions; between one in eight and one in five confident answers is wrong; extra-hard questions score 62–65%.
+- Only TypeSafe Jev is measured and calibrated; Liquid d1 and custom models are supported but not validated.
+- Held-out failures (not tuned against): `h-09`, `h-21`, `h-24` (docs/EVALUATION.md).
 
-## Before publishing (owner)
+## Publishing (owner)
 
-1. 👤 Review the final report, `git log main..v1` and the README.
-2. ⏳ Optionally run a short live check:
-   ```bash
-   intent-sql keys liquid
-   STEPS="check smoke" scripts/release_eval.sh liquid
-   ```
-3. 👤 Push `v1` and let GitHub Actions run; fix anything it finds.
-4. 👤 Enable private vulnerability reporting (Settings > Code security), which docs/SECURITY.md refers to.
-5. 👤 Merge into `main` and push the tag `v1.0.0-beta.1`. Create a GitHub *pre-release* from `docs/RELEASE_NOTES.md`.
-6. 👤 Deactivate the development keys that were rejected (OpenRouter, OpenJEV), if they are not already.
+1. 👤 Review this checklist, the README, `git log main..v1` and the screenshots.
+2. 👤 Push `v1`, let GitHub Actions run (Linux and Windows), and fix anything it finds.
+3. 👤 Enable private vulnerability reporting (Settings > Code security).
+4. 👤 Merge `v1` into `main`. Push the tags `v1.0.0` (and, optionally, the historical `v1.0.0-beta.1`). Create the GitHub release from docs/RELEASE_NOTES.md.
+5. 👤 Deactivate old development keys that are no longer needed.

@@ -1,6 +1,37 @@
 # Changelog
 
-## 1.0.0-beta.1 (2026-10-10, not yet published)
+## 1.0.0 (2026-10-10, not yet published)
+
+The first stable release. 1.0.0 is 1.0.0-beta.1 plus the changes below; the Beta entry describes everything else that is new since the Alpha.
+
+### Validated with TypeSafe Jev
+- Validated live with TypeSafe `jev-1.13.0` on frozen code:
+  - held-out suite: 93.3% (42/45);
+  - Spider test sample (public labels): 78.0%;
+  - Spider dev: 71.3% on a fresh sample, and 76.7% on the questions of the historical run, so no regression.
+
+  docs/EVALUATION.md has every run, with seeds and costs.
+- The calibrated confidence was rechecked on 600 fresh live answers and kept unchanged.
+- Jev is the recommended model in the setup dialog.
+
+### Look and feel
+- The Alpha's visual identity is back on the 1.0 layout:
+  - the green-black and lime studio palette (default), and cream with forest green in light mode;
+  - mono micro-labels, the "The query, made clear." headline, the pipeline stepper with a stats strip, and numbered examples.
+- The decision inspector now uses the Alpha's numbered timeline: the exact question asked, CHOICE/NOUL pills, the chosen option and probability bars.
+- Other interface changes:
+  - a one-click theme toggle;
+  - a developer view in the inspector;
+  - the connection status in the sidebar.
+
+### Fixes
+- Ordering by elapsed time ("longest-serving first") used values rounded for display, so close dates tied. It now orders by the exact value.
+
+### Spending guard
+- Each request attempt, retries included, reserves an upper bound of its cost and is refused if it could pass `INTENTSQL_BUDGET_USD`. Timeouts and server errors count as billed.
+- `INTENTSQL_SPEND_LEDGER` keeps the totals in a file, so the limit is cumulative across runs and processes.
+
+## 1.0.0-beta.1 (2026-10-10, local tag only)
 
 A rewrite of the Alpha (`v0.1.0-alpha.1`, published `main`). Python package version `1.0.0b1`.
 

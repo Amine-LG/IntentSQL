@@ -33,7 +33,8 @@ request ──► grounding ──► candidates ──► Jev: one parallel rou
 | `compiler.py` | IR → SQLite SQL with bound parameters; structural validation (unknown objects, aggregates in WHERE, set-width mismatches, unnamed derived columns …) |
 | `render.py` | Plain-English description of an `Intent`: shown to users and compared with the request during verification |
 | `pipeline.py` | `answer()`: the whole flow, verification, execution with row/time limits, empty-result explanations |
-| `jev.py` | Decision-model client: chunking, parallel requests, validated answers, retries, usage and spend accounting, connection states, optional disk cache |
+| `jev.py` | Decision-model client: chunking, parallel requests, validated answers, retries, usage accounting, connection states, optional disk cache |
+| `spending.py` | Spending guard: a conservative reservation per request attempt against the limit, settled from reported usage; optional file ledger, so the limit is cumulative across runs |
 | `web.py`, `static/` | Local web app and JSON API (including server-sent progress events) |
 | `cli.py` | `intent-sql` commands: `ask`, `schema`, `benchmark`, `serve`, `keys`, `provider` |
 | `benchmark/` | Spider loading, stratified sampling, execution matching, reports, hand-written suites |

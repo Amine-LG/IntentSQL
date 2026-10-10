@@ -1,44 +1,49 @@
-# IntentSQL 1.0.0-beta.1
+# IntentSQL 1.0.0
 
-A Beta of the rewritten IntentSQL. You ask a SQLite database questions in plain English, and the app shows how each answer was reached: the values it found, each decision with the options it was offered, the plan, the verification, and the read-only SQL it ran.
+The first stable release. You ask a SQLite database a question in plain English, and IntentSQL shows how the answer was reached:
+- the values it found;
+- every decision, with the exact question it asked and the model's probabilities;
+- the plan and its joins, and the verification;
+- the read-only SQL it ran.
 
-## What's new since the Alpha (v0.1.0-alpha.1)
+![A real answer from TypeSafe Jev](images/answer-jev.png)
 
-- **A new architecture.**
-  - Code proposes every option.
-  - A decision model only chooses among them, in one parallel round.
-  - A typed plan compiles to parameterized, read-only SQL.
-  - Alternative readings that give different results are run and checked.
-- **Much wider SQL coverage:** multi-hop, self- and outer joins; subqueries; INTERSECT and EXCEPT; anti-joins; nested aggregates; percentages; derived measures; top-N per group; periods. The Alpha handled one join hop and no subqueries.
-- **A new web app:**
-  - first-run model setup with honest connection states;
-  - a visual decision inspector;
-  - history, CSV export, light and dark themes, a mobile layout.
-- **Open to any compatible model:**
-  - TypeSafe Jev and Liquid AI d1 are built in;
-  - **custom decision models** (your own System One endpoint) can be added in the app or the CLI, and are tested for compatibility;
-  - there is an explicitly labelled demo mode, and never a hidden fallback.
-- **Read-only:** requests to change data are refused, and queries run on read-only connections.
-- **Engineering:** CI, secret scanning, a dependency audit, a Docker image and a CLI.
+## Highlights
 
-## How good is it?
+- **Code proposes, the model chooses, code builds.** A decision model only picks among options that code built from your database. A typed plan compiles to parameterized, read-only SQL. Alternative readings that give different results are run and checked, and the answer carries a calibrated confidence.
+- **Validated with TypeSafe Jev** (`jev-1.13.0`) on frozen code:
+  - **93.3%** on a held-out suite written for an unfamiliar schema (42/45);
+  - **78.0%** on a 600-question Spider test sample (public labels; not an official leaderboard score);
+  - 87.5% of confident answers correct.
+- **Open to any compatible model.** TypeSafe Jev (recommended) and Liquid AI d1 are built in. You can add your own System One endpoint in the app or the CLI, and IntentSQL tests whether it answers in the right format. Demo mode is clearly labelled, and there is never a silent fallback.
+- **The Alpha's look, the 1.0's usability.** The green-black and lime studio palette and the decision timeline are back. They come with the newer layout: model setup, history, CSV export, alternative readings, a mobile layout, and light and dark themes.
+- **Safe by construction.** Execution is read-only with row and time limits. Keys stay server-side. Writes from other sites or local ports are blocked. There is a cumulative spending guard.
 
-Historical measurement with TypeSafe Jev, on code from 2026-10-09:
-- **76.8% ± 2.6** execution accuracy on Spider dev (two random batches of 300);
-- 86% of those answers were confident, and **86.0%** of the confident answers were correct;
-- **91.7%** correct on the most confident 70% of questions.
+## Since the Alpha (v0.1.0-alpha.1)
 
-The Alpha scored 33.8% on 80 Spider train questions. That figure is not directly comparable: different split, sample size and code. Details are in [docs/EVALUATION.md](EVALUATION.md#results).
+| | Alpha | 1.0.0 |
+|---|---|---|
+| SQL coverage | one join hop, flat filters, simple aggregates | multi-hop, self- and outer joins; subqueries; INTERSECT/EXCEPT; anti-joins; nested aggregates; percentages; derived measures; top-N per group; periods |
+| How the model is used | a multi-step planner loop | one parallel round of bounded choices, plus verification |
+| Confidence | none | calibrated per model; uncertain answers flagged, with alternatives |
+| Data access | reads and confirmed writes | read-only |
+| Spider train, the Alpha's 80 questions | 33.8% (0% on hard and extra-hard) | 77.5% early in the rewrite; 76.8% on 600 train questions now |
 
-This exact build has **not** been measured live: the TypeSafe account had no credits, and no Liquid key was available. Liquid AI d1 support is implemented and tested offline but not yet validated with real answers.
+The two systems were not measured on identical benchmarks, so the comparison is indicative ([docs/EVALUATION.md](EVALUATION.md#compared-with-the-alpha)).
 
 ## Known limitations
 
 - SQLite only; one question at a time.
-- Extra-hard questions (unions of differently aggregated subqueries, deep nesting) are the weakest area.
-- About one confident answer in seven was wrong on Spider dev. Read the "IntentSQL understood" line before trusting a result.
-- Confidence is calibrated for TypeSafe Jev only. Custom models are not verified by IntentSQL; a passing connection test checks the format, not decision quality.
+- Between one in eight (Spider test) and one in five (fresh Spider dev sample) confident answers are wrong. Check the "IntentSQL understood" line for results that matter.
+- Extra-hard questions (62–65%) are the weakest area.
+- Only TypeSafe Jev is measured and calibrated. Liquid d1 and custom models are supported but not validated.
 
 ## Install
 
-See the [README](../README.md#install): `pip install .` from a clone, or the Docker image. Then choose a model, or try demo mode.
+```bash
+git clone https://github.com/Amine-LG/IntentSQL.git && cd IntentSQL
+python3 -m venv .venv && .venv/bin/pip install .
+.venv/bin/intent-sql serve
+```
+
+See [INSTALL.md](INSTALL.md) for Docker, configuration and troubleshooting.

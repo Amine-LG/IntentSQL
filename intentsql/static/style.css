@@ -491,3 +491,4 @@ legend { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
 .steps { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13.5px; margin: 12px 0; }
 .steps dt { font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
 .steps dd { margin: 0; font-variant-numeric: tabular-nums; }
+.stats:empty { display: none; }

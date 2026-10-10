@@ -304,7 +304,7 @@ def _guarded(run_benchmark):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="intent-sql", description=__doc__)
-    parser.add_argument("--version", action="version", version=f"IntentSQL {__version__} (beta)")
+    parser.add_argument("--version", action="version", version=f"IntentSQL {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ask = sub.add_parser("ask", help="answer one natural-language question")

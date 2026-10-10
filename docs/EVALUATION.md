@@ -62,7 +62,7 @@ Every run writes a JSON report containing:
 
 The reports live outside the repository, in `../IntentSQL-artifacts/v1-runs/`.
 
-## Providers (added 2026-10-10, revised for the Beta)
+## Providers (added 2026-10-10, revised for 1.0)
 
 The supported decision models are TypeSafe Jev (`jev-latest`) and Liquid AI d1 (`d1`, `d1:free`). Both use the same System One question protocol, but they are different models and are **never** assumed to be interchangeable:
 
@@ -83,25 +83,45 @@ The supported decision models are TypeSafe Jev (`jev-latest`) and Liquid AI d1 (
 
 Earlier development also used OpenRouter's and OpenJEV's access to Jev. On 2026-10-10 both keys were rejected (expired / invalid), and neither produced any of the results below. Both were removed for the Beta.
 
-## Results
+## Results: 1.0.0 release assessment (2026-10-10)
 
-All results come from TypeSafe `jev-latest` and are **historical**: they were measured on code from 2026-10-09 and 2026-10-10. The code has changed since then:
-- the provider layer was rewritten;
-- `interpret.py` was split into modules;
-- arithmetic across aggregation levels and elapsed-time questions were added.
+- **Model.** TypeSafe `jev-latest`, answered by `jev-1.13.0` (recorded in every report).
+- **Code.** Frozen at commit `e2cef0c` for everything below the smoke test. The later commits change only the user interface, documentation and packaging, not the pipeline.
+- **Calibration.** The table fitted on TypeSafe train runs, unchanged. It was checked on the 600 fresh train answers below: every confidence bin was within 3 points of its accuracy.
+- **Reports.** In `../IntentSQL-artifacts/v1-runs/stable/`.
 
-Those changes are covered by offline tests, but the Beta build itself has not been measured. The TypeSafe account returned HTTP 402 (no credits), and no Liquid key was available. Reports are in `../IntentSQL-artifacts/v1-runs/`.
+| Evaluation | Data | Result |
+|---|---|---|
+| Live smoke | `smoke.json`, 15 cases, one per SQL category | **15/15** |
+| Capability suite (development) | `features.json`, 56 cases | **94.6%** (historical 92.9%) |
+| Adversarial suite (development) | `adversarial.json`, 65 cases | **92.3%**; 5 of 6 unsupported requests refused, no false refusals (historical 95.4%) |
+| Regression, same questions | Spider train, the 2 × 300 questions of the historical seeds 21 and 31 | **76.8%** (76.3 + 77.3), historical 75.8%; question-level changes: 3 → 3 and 0 → 6 (wrong → right) |
+| Regression, same questions | Spider dev, the 600 questions of the historical headline run (seeds 15123661, 89959258) | **76.7%**, historical 76.8%; confident answers 85.2% correct |
+| **Held-out suite** | `holdout.json`, 45 cases on a clinic schema never used in development; run once on frozen code | **42/45 = 93.3%** (Wilson 95% interval 82–98%); 3/3 unsupported requests refused; 39/40 confident answers correct |
+| Spider dev, fresh sample | 2 random batches of 300, seeds 1968554267, 447747827 | **71.3% ± 0.9**; confident answers 81.5% correct (82.8% answered); 87.9% at 70% coverage; extra-hard 62.5% |
+| **Spider test** | 2 random batches of 300, seeds 988774448, 2099190301; public 2023 test labels; databases from the test split, never used in development | **78.0% ± 2.4**; confident answers 87.5% correct (85.3% answered); 90.1% at 70% coverage; by hardness easy 84.9, medium 83.6, hard 70.8, extra-hard 65.0 |
+| Cost | all runs above | 4,203 billed requests, 18.77M input tokens, **$0.79** at the listed $0.042/M |
 
-| Evaluation | Data | Result | Report |
-|---|---|---|---|
-| Spider dev (validation) | 2 random batches of 300, seeds 15123661 / 89959258, 2026-10-09 | **76.8% ± 2.6 EX**. By hardness: easy 84.0, medium 80.6, hard 73.5, extra-hard 59.4 | `v2l-dev-random2x300.json` |
-| Confident answers, same run | | 86.0% answered confidently, 86.0% of those correct; 12.0% of all questions answered confidently but wrongly | same |
-| Accuracy by coverage, same run | | 90%: 84.7, 80%: 88.3, 70%: 91.7, 60%: 94.0, 50%: 94.9 | same |
-| Spider train (development) | 300 questions each, seeds 21 / 31, 2026-10-09 | 76.3% / 75.3% | `v2m-train-300-s21/s31.json` |
-| Capability suite | `features.json`, 56 cases, 2026-10-10 | 92.9% | |
-| Adversarial suite | `adversarial.json`, 65 cases, 2026-10-10 | 95.4%; 5 of 6 unsupported requests refused, no false refusals | |
-| Held-out suite | `holdout.json` | not run yet | |
-| Spider test | ≥ 600 questions | not run yet | |
+**Reading the dev numbers.** The two dev samples differ by 5.4 points: 76.7% on the historical questions and 71.3% on a fresh draw, with the same code and model. The same-question comparison shows no regression. The gap is the variance between 600-question samples of a 1,034-question split; a fresh sample is the less biased estimate. Together they suggest Spider dev accuracy in the low-to-mid 70s.
+
+**Spider test is not an official score.** It uses the public 2023 test labels on a stratified random sample, scored by IntentSQL's own execution matcher (`docs/EVALUATION.md#scoring`), not the official evaluation script or leaderboard.
+
+**Caching.** Runs used a response cache keyed by the exact request. Repeated identical requests were answered from the cache, mainly in the same-question dev run after the fresh dev run. Cached answers are the model's real earlier answers to the same request.
+
+**Held-out failures (not tuned against):**
+- `h-09`: "Which doctors work in Cardiology?" also filtered on specialty.
+- `h-21`: a computed cost column was missing.
+- `h-24`: patient IDs instead of names, flagged uncertain.
+
+**Development regression found and fixed before freezing.** Ordering by elapsed time ("longest-serving first") sorted on values rounded for display, so close dates tied (adversarial `ord-2`). The fix is commit `e2cef0c`, with a regression test.
+
+### Historical results (code from 2026-10-09)
+
+| Evaluation | Result |
+|---|---|
+| Spider dev, 2 × 300 (seeds 15123661, 89959258) | 76.8% ± 2.6; confident 86.0%; 91.7% at 70% coverage; extra-hard 59.4% |
+| Spider train, seeds 21 / 31 | 76.3% / 75.3% |
+| Capability / adversarial suites | 92.9% / 95.4% |
 
 ### Compared with the Alpha
 
@@ -110,19 +130,16 @@ Those changes are covered by offline tests, but the Beta build itself has not be
 | Alpha `v0.1.0-alpha.1` | Spider train, 80 questions, seed 11 | 33.8% (easy 68, medium 44, hard 0, extra-hard 0) |
 | First v1 prototype (2026-10-09 21:22 UTC) | the same 80 questions | 58.8% |
 | v1, three iterations later (21:28 UTC) | the same 80 questions | 77.5% |
-| v1 (historical, above) | Spider dev, 600 questions | 76.8% |
+| 1.0.0 | Spider train, 600 questions | 76.8% |
+| 1.0.0 | Spider test, 600 questions (public labels) | 78.0% |
 
-The same-sample rows are the only like-for-like comparison. Even those flatter v1, because train questions were development data, and that sample was inspected while v1 was being built. The dev figure is the fairer estimate of v1's accuracy, but it is not comparable with the Alpha's train figure:
-- different split;
-- 600 questions against 80;
-- different code.
+The same-sample rows are the only like-for-like comparison with the Alpha, and they flatter v1: train questions were development data, and that sample was inspected during development. The Alpha could not express joins beyond one hop, subqueries, set operations or arithmetic (docs/AUDIT.md), which accounts for its 0% on hard and extra-hard questions.
 
-Either way, the Alpha could not express joins beyond one hop, subqueries, set operations or arithmetic (docs/AUDIT.md). That accounts for its 0% on hard and extra-hard questions.
-
-### To measure this Beta
+### Re-running
 
 ```bash
-intent-sql keys liquid            # or typesafe
-STEPS="check smoke dev-suites" scripts/release_eval.sh liquid     # first look: ~140 questions, ~$0.07 at Jev's listed price
-scripts/release_eval.sh liquid    # the full protocol, about $1
+intent-sql keys typesafe
+export INTENTSQL_BUDGET_USD=1 INTENTSQL_SPEND_LEDGER=~/intentsql-spend.json   # cumulative cap across runs
+STEPS="check smoke dev-suites" scripts/release_eval.sh typesafe                 # about $0.10
+scripts/release_eval.sh typesafe                                                # the full protocol, about $1
 ```
