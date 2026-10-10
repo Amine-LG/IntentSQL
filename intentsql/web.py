@@ -161,7 +161,7 @@ def get_connection() -> dict[str, Any]:
         entry = {
             "name": p.name, "label": p.label, "model_label": p.model_label, "model": model,
             "models": list(p.models), "needs_key": not p.offline and not p.custom, "has_key": has_key,
-            "key_help": p.key_help, "docs": p.docs, "custom": p.custom, **state,
+            "key_help": p.key_help, "docs": p.docs, "custom": p.custom, "price_per_mtok": p.price_per_mtok, **state,
             "state_text": STATE_TEXT.get(state["state"], state["state"])}
         if p.custom:
             entry.update({"id": p.name.removeprefix(CUSTOM_PREFIX), "url": p.url, "kinds": list(p.kinds),

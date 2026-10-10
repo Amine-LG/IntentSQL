@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Ask a SQLite database in plain English. IntentSQL shows what it understood, the SQL it ran and the result.">
-  <title>IntentSQL</title>
+  <meta name="description" content="Ask a SQLite database in plain English. Watch your question become bounded decisions, a typed plan and exact, read-only SQL.">
+  <meta name="theme-color" content="#101311">
+  <title>IntentSQL · The query, made clear.</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
@@ -16,10 +17,11 @@
   <button id="toggle-sidebar" class="icon-button only-narrow" type="button" aria-label="Show schema and history" aria-expanded="false" aria-controls="sidebar">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <div class="brand">
-    <img src="/static/favicon.svg" alt="" width="22" height="22">
-    <span>IntentSQL</span>
-  </div>
+  <a class="brand" href="/" aria-label="IntentSQL home">
+    <span class="brand-mark" aria-hidden="true">i<span>&nearr;</span></span>
+    <strong>Intent<span>SQL</span></strong>
+    <span class="version">Studio / 1.0</span>
+  </a>
   <label class="db-picker">
     <span class="sr-only">Database</span>
     <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></svg>
@@ -35,14 +37,15 @@
       <span id="model-name" class="model-name">Model</span>
       <span id="model-state" class="model-state hide-narrow"></span>
     </button>
-    <button id="open-settings" class="icon-button" type="button" aria-label="Display settings">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to light theme" title="Light / dark theme">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg>
     </button>
   </div>
 </header>
 
 <div class="layout">
   <aside id="sidebar" class="sidebar" aria-label="Database schema and history">
+    <div class="sidebar-label">Workspace</div>
     <div class="side-tabs" role="tablist" aria-label="Sidebar">
       <button id="tab-schema" role="tab" aria-selected="true" aria-controls="panel-schema" type="button">Schema</button>
       <button id="tab-history" role="tab" aria-selected="false" aria-controls="panel-history" type="button">History</button>
@@ -57,11 +60,23 @@
       <p id="history-empty" class="muted small">Questions you ask about this database appear here.</p>
       <button id="clear-history" class="button ghost small" type="button" hidden>Clear history</button>
     </section>
+    <div class="sidebar-bottom">
+      <button id="connection-shortcut" class="connection-link" type="button" aria-haspopup="dialog">
+        <span id="side-dot" class="state-dot" aria-hidden="true"></span><span id="side-model">Checking the model…</span><span class="arrow-ne" aria-hidden="true">&nearr;</span>
+      </button>
+      <span class="workspace-note">Read-only · working copies, originals preserved</span>
+    </div>
   </aside>
 
   <main id="main">
+    <section class="intro" aria-labelledby="intro-title">
+      <div class="eyebrow"><span class="accent-line"></span> Language in. Clarity out.</div>
+      <h1 id="intro-title">The query, <span>made clear.</span></h1>
+      <p>Ask in your own words. See every decision behind the SQL.</p>
+    </section>
+
     <section id="welcome" class="card welcome" hidden aria-labelledby="welcome-title">
-      <h1 id="welcome-title">Choose a model to get started</h1>
+      <h2 id="welcome-title">Choose a model to get started</h2>
       <p>IntentSQL asks a small <em>decision model</em> to choose between readings of your question that it builds from your database, then writes and checks the SQL itself. Connect a model, or look around in demo mode first.</p>
       <div class="welcome-actions">
         <button id="welcome-setup" class="button primary" type="button">Set up a model</button>
@@ -70,22 +85,29 @@
     </section>
 
     <form id="ask-form" class="ask card" autocomplete="off">
-      <label for="question" class="ask-label">Ask about <strong id="db-name">this database</strong></label>
+      <label for="question" class="ask-label">Ask the database <strong id="db-name">this database</strong></label>
       <div class="ask-row">
         <textarea id="question" rows="1" maxlength="2000" placeholder="e.g. Which customers have never placed an order?" required></textarea>
-        <button id="ask" class="button primary" type="submit">Ask</button>
+        <button id="ask" class="button primary" type="submit">Explore query <span aria-hidden="true">&nearr;</span></button>
       </div>
-      <p class="hint muted small"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> to focus</p>
-      <div id="examples" class="examples" aria-label="Example questions"></div>
+      <p class="hint small"><kbd>Enter</kbd> to ask · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> to focus</p>
     </form>
+    <div class="samples">
+      <span class="tiny-label">Explore the possibilities</span>
+      <div id="examples" class="examples" aria-label="Example questions"></div>
+    </div>
 
-    <ol id="progress" class="progress" hidden aria-label="Progress">
-      <li data-phase="ground">Reading the question</li>
-      <li data-phase="interpret">Understanding it</li>
-      <li data-phase="compile">Building the query</li>
-      <li data-phase="verify">Double-checking</li>
-      <li data-phase="execute">Running it</li>
-    </ol>
+    <section id="journey" class="journey" hidden aria-label="How the answer is being built">
+      <ol id="progress" class="pipeline" aria-label="Stages">
+        <li data-phase="ground"><span class="n">01</span><strong>Inspect</strong></li>
+        <li data-phase="interpret"><span class="n">02</span><strong>Resolve</strong></li>
+        <li data-phase="compile"><span class="n">03</span><strong>Compile</strong></li>
+        <li data-phase="verify"><span class="n">04</span><strong>Verify</strong></li>
+        <li data-phase="execute"><span class="n">05</span><strong>Execute</strong></li>
+      </ol>
+      <div id="stats" class="stats" aria-label="Usage for this answer"></div>
+      <p id="run-status" class="run-status" role="status"><span class="pulse"></span><span id="run-status-text"></span></p>
+    </section>
 
     <article id="answer" class="card answer" hidden aria-live="polite" aria-labelledby="answer-title">
       <header class="answer-head">
@@ -107,19 +129,20 @@
       </section>
 
       <section id="result-section" class="result-section">
-        <div class="section-head">
-          <p class="eyebrow">Result <span id="row-count" class="muted"></span></p>
+        <div class="section-head result-head">
+          <div><p class="eyebrow">The answer</p><h3 class="section-title">Results</h3></div>
           <div class="section-actions">
             <button id="copy-result" class="button ghost small" type="button">Copy</button>
-            <button id="export" class="button ghost small" type="button">Download CSV</button>
+            <button id="export" class="button ghost small" type="button">Export CSV &darr;</button>
           </div>
+          <div class="row-count"><strong id="row-count-n">&mdash;</strong><span id="row-count">rows</span></div>
         </div>
         <div id="result" class="result"></div>
       </section>
 
       <section id="sql-section" class="sql-section">
         <div class="section-head">
-          <p class="eyebrow">SQL</p>
+          <p class="eyebrow sql-label"><span class="dot"></span> Readable SQL <b>display</b></p>
           <div class="section-actions">
             <button id="copy-sql" class="button ghost small" type="button">Copy</button>
             <button id="edit-sql" class="button ghost small" type="button">Open in console</button>
@@ -129,9 +152,12 @@
       </section>
 
       <section id="inspector" class="inspector" aria-labelledby="inspector-title">
-        <div class="section-head">
-          <p id="inspector-title" class="eyebrow">How IntentSQL decided</p>
-          <span id="inspector-meta" class="muted small"></span>
+        <div class="inspector-head">
+          <div><p class="eyebrow">Semantic decisions</p><h3 id="inspector-title" class="section-title">How IntentSQL decided</h3></div>
+          <div class="inspector-tools">
+            <span id="inspector-meta" class="muted small"></span>
+            <label class="dev-toggle"><input id="developer" type="checkbox"> Developer view</label>
+          </div>
         </div>
         <ol id="stages" class="stages" role="tablist" aria-label="Stages of the answer"></ol>
         <div id="stage-panel" class="stage-panel" role="tabpanel" hidden></div>
@@ -139,23 +165,6 @@
     </article>
   </main>
 </div>
-
-<dialog id="settings-dialog" aria-labelledby="settings-title">
-  <form method="dialog" id="settings-form">
-    <h2 id="settings-title">Display</h2>
-    <fieldset>
-      <legend>Display</legend>
-      <label class="inline">Theme
-        <select id="theme-select"><option value="">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
-      </label>
-      <label class="check"><input id="developer" type="checkbox"> Show technical details (plans, Jev calls)</label>
-    </fieldset>
-    <div class="dialog-actions">
-      <button value="cancel" class="button ghost">Close</button>
-      <button class="button primary" value="default">Done</button>
-    </div>
-  </form>
-</dialog>
 
 <dialog id="model-dialog" class="model-dialog" aria-labelledby="model-title">
   <form method="dialog" id="model-form">
@@ -211,6 +220,10 @@
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<footer class="footer muted small">IntentSQL <span id="app-version"></span> Beta · It shows its reading of every question. Check results that matter: interpretations can be wrong.</footer>
+<footer class="footer">
+  <span><span class="footer-mark" aria-hidden="true">&#9671;</span>Small decisions. Exact queries.</span>
+  <span class="footer-disclaimer">IntentSQL shows its reading of every question. Check results that matter: interpretations can be wrong.</span>
+  <span>IntentSQL <span id="app-version"></span> · MIT</span>
+</footer>
 </body>
 </html>

@@ -66,7 +66,12 @@ function formatValue(value) {
 
 // ---------------------------------------------------------------- theme & preferences
 function applyTheme(theme) {
-  if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+  // Dark is the default (the Alpha's studio look); light is the cream and forest-green variant.
+  const light = theme === "light";
+  if (light) document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+  const toggle = document.getElementById("theme-toggle");
+  if (toggle) toggle.setAttribute("aria-label", light ? "Switch to dark theme" : "Switch to light theme");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", light ? "#f5f6ef" : "#101311");
 }
 applyTheme(store("intentsql.theme"));
 const developer = () => Boolean(store("intentsql.developer"));
@@ -75,8 +80,8 @@ const developer = () => Boolean(store("intentsql.developer"));
 const STATE_TONE = { connected: "ok", demo: "demo", untested: "idle", not_configured: "idle",
   auth_failed: "bad", no_credits: "bad", unavailable: "warn", budget_reached: "warn", error: "bad", incompatible: "bad" };
 const PROVIDER_BLURB = {
-  typesafe: "TypeSafe's Jev, the model IntentSQL was developed and benchmarked with.",
-  liquid: "Liquid AI's d1, a decision model with the same question types.",
+  typesafe: "TypeSafe's Jev: the model IntentSQL is developed and validated with.",
+  liquid: "Liquid AI's d1, with the same question types. Supported, but not yet validated with real answers.",
   demo: "No model: fixed default choices. Shows how the app works; it does not understand questions.",
 };
 
@@ -100,10 +105,14 @@ async function refreshConnection() {
 function renderModelChip(conn) {
   const active = conn.active;
   const dot = $("#model-dot");
+  const side = $("#side-model");
   if (!active) {
     dot.className = "state-dot idle"; $("#model-name").replaceChildren("Choose", el("span", { class: "hide-narrow", text: " a model" })); $("#model-state").textContent = "";
+    $("#side-dot").className = "state-dot idle"; side.textContent = "No model selected";
     return;
   }
+  $("#side-dot").className = `state-dot ${STATE_TONE[active.state] || "idle"}`;
+  side.textContent = active.name === "demo" ? "Demo mode · no model" : `${active.custom ? active.label : active.model_label} · ${active.state_text}`;
   dot.className = `state-dot ${STATE_TONE[active.state] || "idle"}`;
   $("#model-name").replaceChildren(...(active.name === "demo" ? ["Demo", el("span", { class: "hide-narrow", text: " mode" })]
     : active.custom ? [active.label, el("span", { class: "hide-narrow", text: " · custom" })]
@@ -134,6 +143,7 @@ function renderModelDialog() {
       type: "button", role: "radio", "aria-checked": String(selected), class: `provider-card${selected ? " selected" : ""}`,
       onclick: () => { state.modelChoice = p.name; state.confirmDelete = false; renderModelDialog(); },
     },
+    p.name === "typesafe" ? el("span", { class: "recommended", text: "RECOMMENDED" }) : null,
     el("span", { class: "provider-name" }, p.custom ? p.label : p.name === "demo" ? "Demo mode" : `${p.model_label}`,
       p.custom || p.name === "demo" ? null : el("span", { class: "provider-by", text: ` by ${p.label}` })),
     el("span", { class: "provider-blurb", text: p.custom ? `${p.model} · ${hostOf(p.url)}` : PROVIDER_BLURB[p.name] || "" }),
@@ -313,6 +323,7 @@ response: {"answers": {"team": {"choice": "billing",
 }
 
 $("#model-chip").addEventListener("click", openModelDialog);
+$("#connection-shortcut").addEventListener("click", () => { $("#sidebar").classList.remove("open"); openModelDialog(); });
 // Enter in a field must not submit the dialog's form (which would close it).
 $("#provider-detail").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
 $("#welcome-setup").addEventListener("click", openModelDialog);
@@ -324,13 +335,11 @@ $("#welcome-demo").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- display settings
-function openSettings() {
-  $("#theme-select").value = store("intentsql.theme") || "";
-  $("#developer").checked = developer();
-  $("#settings-dialog").showModal();
-}
-$("#open-settings").addEventListener("click", openSettings);
-$("#theme-select").addEventListener("change", (e) => { store("intentsql.theme", e.target.value || null); applyTheme(e.target.value); });
+$("#theme-toggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  store("intentsql.theme", next); applyTheme(next);
+});
+$("#developer").checked = developer();
 $("#developer").addEventListener("change", (e) => { store("intentsql.developer", e.target.checked); if (state.result) renderInspector(); });
 
 // ---------------------------------------------------------------- sidebar
@@ -407,8 +416,9 @@ $("#schema-filter").addEventListener("input", () => state.schema && renderSchema
 
 function renderExamples(examples) {
   question.placeholder = examples && examples.length ? `e.g. ${examples[examples.length > 2 ? 2 : 0]}` : "Ask a question about this database";
-  $("#examples").replaceChildren(...(examples || []).map((q) => el("button", { type: "button", text: q,
-    onclick: () => { $("#question").value = q; autosize(); ask(); } })));
+  $("#examples").replaceChildren(...(examples || []).map((q, i) => el("button", { type: "button",
+    onclick: () => { $("#question").value = q; autosize(); ask(); } },
+  el("span", { class: "n", text: String(i + 1).padStart(2, "0") }), el("span", { text: q }), el("span", { class: "go", "aria-hidden": "true", text: "↗" }))));
 }
 
 // ---------------------------------------------------------------- history
@@ -449,18 +459,32 @@ document.addEventListener("keydown", (event) => {
 });
 
 const PHASES = ["ground", "interpret", "compile", "verify", "execute"];
-function setProgress(done, timings = {}) {
-  const box = $("#progress");
-  box.hidden = false;
+function setProgress(done, timings = {}, failed = false) {
+  $("#journey").hidden = false;
   $$("#progress li").forEach((li) => {
     const phase = li.dataset.phase;
     const index = PHASES.indexOf(phase);
     const finished = done.includes(phase);
     const nextIndex = Math.max(-1, ...done.map((p) => PHASES.indexOf(p))) + 1;
-    li.className = finished ? "done" : index === nextIndex ? "active" : "";
-    li.querySelector(".ms")?.remove();
-    if (finished && timings[phase] !== undefined) li.append(el("span", { class: "ms", text: `${timings[phase]} ms` }));
+    li.className = finished ? "done" : index === nextIndex ? (failed ? "failed" : "active") : "";
+    li.title = finished && timings[phase] !== undefined ? `${timings[phase]} ms` : "";
   });
+}
+function runStatus(text, tone) {
+  $("#run-status").className = `run-status ${tone || ""}`;
+  $("#run-status-text").textContent = text;
+}
+function renderStats(result) {
+  const u = result.usage || {};
+  const provider = (state.connection?.providers || []).find((p) => p.name === result.provider);
+  const demo = result.provider === "demo";
+  const estimate = u.cost_usd ? u.cost_usd : provider && provider.price_per_mtok ? (u.input_tokens || 0) * provider.price_per_mtok / 1e6 : null;
+  const stat = (label, value) => el("div", { class: "stat" }, el("label", { text: label }), el("strong", { text: value }));
+  $("#stats").replaceChildren(
+    stat("Calls", demo ? "0" : String(u.calls || 0)),
+    stat("Input tokens", (u.input_tokens || 0).toLocaleString()),
+    stat(u.cost_usd ? "Cost USD" : "Est. cost USD", demo ? "$0" : estimate === null ? "—" : `$${estimate.toFixed(estimate < 0.01 ? 5 : 3)}`),
+    stat("Time", result.timings_ms?.total !== undefined ? `${(result.timings_ms.total / 1000).toFixed(2)}s` : "—"));
 }
 
 async function streamAnswer(body, onPhase) {
@@ -496,21 +520,30 @@ async function ask() {
   const text = question.value.trim();
   if (!text || !state.database) return;
   const button = $("#ask");
-  button.disabled = true; button.textContent = "Asking…";
+  button.disabled = true; button.textContent = "Exploring…";
   const done = []; const timings = {};
+  $("#stats").replaceChildren();
   setProgress(done);
+  runStatus("Reading your question and the schema…", "running");
   try {
     const result = await streamAnswer({ database: state.database, question: text }, (event) => {
       done.push(event.phase); timings[event.phase] = event.ms; setProgress(done, timings);
     });
     remember(text, result.status);
+    const failed = ["error", "refused"].includes(result.status);
+    setProgress(failed ? done : PHASES, timings, failed);
+    renderStats(result);
+    runStatus({ answered: "Query complete · exact SQLite result ready", ambiguous: "Answered, but uncertain · compare the readings below",
+      refused: "Not answered · see why below", error: "Stopped · see the error below" }[result.status] || "Done",
+      failed ? "bad" : "ok");
     showAnswer(result);
     refreshConnection();          // a real answer (or failure) updates the model's status
   } catch (err) {
+    setProgress(done, timings, true);
+    runStatus("Stopped · see the error below", "bad");
     showAnswer({ status: "error", question: text, message: err.message, rows: [], columns: [] });
   } finally {
-    button.disabled = false; button.textContent = "Ask";
-    $("#progress").hidden = true;
+    button.disabled = false; button.replaceChildren("Explore query ", el("span", { "aria-hidden": "true", text: "↗" }));
   }
 }
 
@@ -579,7 +612,9 @@ function renderResult(reading) {
   box.className = "result";
   box.replaceChildren();
   const n = rows.length;
-  $("#row-count").textContent = `· ${plural(n, "row")}${reading.truncated ? " (first rows only)" : ""}`;
+  $("#row-count-n").textContent = n.toLocaleString();
+  $("#row-count").textContent = `${n === 1 ? "row" : "rows"} returned${reading.truncated ? " (first rows only)" : ""}`;
+  $(".row-count").hidden = columns.length === 1 && n === 1;     // the big value says it all
   if (columns.length === 1 && n === 1) {
     box.className = "result single";
     box.append(el("div", { class: "big-value", text: formatValue(rows[0][0]) }), el("div", { class: "big-label", text: columns[0] }));
@@ -750,7 +785,7 @@ function panelFound(panel, result) {
   panel.append(el("p", { class: "muted small", text: `${g.schema_tables || "All"} tables were available to choose from.` }));
 }
 
-function decisionCard(d, demo = false) {
+function decisionCard(d, demo = false, number = 0, result = null) {
   const probs = d.probabilities || null;
   const options = d.options || {};
   let chosenKey = null; let chosenP = Number(d.probability) || 0;
@@ -759,24 +794,42 @@ function decisionCard(d, demo = false) {
     chosenP = probs[chosenKey];
   }
   const isNoul = !probs;
+  const kind = isNoul ? "noul" : "choice";
   const chosenText = isNoul ? (chosenP >= 0.5 ? "Yes" : "No") : (options[chosenKey] || (typeof d.selected === "string" ? d.selected : chosenKey));
   const question = String(d.asked || d.question || "");
   const marked = (text) => String(text).split(/(\[[^\]]*\])/).map((part) => part.startsWith("[") ? el("mark", { text: part.slice(1, -1) }) : part);
-  const others = probs ? Object.entries(probs).filter(([k]) => k !== chosenKey).sort((a, b) => b[1] - a[1]).slice(0, 4) : [];
+  const pct = (p) => `${Math.round(p * 100)}%`;
+  const shown = isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP;
   const card = el("li", { class: "decision-card" },
     el("div", { class: "decision-top" },
-      el("span", { class: "decision-kind", text: PURPOSE[d.purpose] || d.purpose }),
-      el("span", { class: "decision-p", text: demo ? "fixed default" : `${Math.round((isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP) * 100)}%` })),
-    el("p", { class: "decision-q" }, marked(question)),
-    d.context ? el("p", { class: "decision-context" }, "“", ...marked(d.context), "”") : null,
-    el("div", { class: "decision-choice" }, el("span", { class: "chosen", text: chosenText }), demo ? null : bar(isNoul ? Math.max(chosenP, 1 - chosenP) : chosenP, "chosen-bar")));
-  if (demo && others.length) {
+      el("span", { class: "decision-kind", text: `${String(number).padStart(2, "0")} / ${PURPOSE[d.purpose] || d.purpose}` }),
+      el("span", { class: "decision-meta" }, el("span", { class: `kind-pill ${kind}`, text: kind.toUpperCase() }),
+        el("span", { class: "decision-p", text: demo ? "fixed default" : pct(shown) }))),
+    el("p", { class: "chosen-line", text: chosenText }),
+    el("div", { class: "exact" }, el("span", { class: "exact-label" }, demo ? "QUESTION (DEMO: NOT SENT)" : "EXACT QUESTION ASKED"),
+      el("p", { class: "decision-q" }, marked(question)),
+      d.context ? el("p", { class: "decision-context" }, "“", ...marked(d.context), "”") : null));
+  if (probs && !demo) {
+    const ranked = Object.entries(probs).sort((a, b) => b[1] - a[1]);
+    const row = ([k, p]) => el("li", { class: k === chosenKey ? "chosen" : "" },
+      el("span", { class: "opt", text: options[k] || k }), el("span", { class: "pct", text: pct(p) }), bar(p));
+    const top = ranked.slice(0, 3).filter(([k, p], i) => i === 0 || p > 0.005);
+    card.append(el("ul", { class: "probs", "aria-label": "Options and the model's probabilities" }, top.map(row)));
+    const rest = ranked.slice(3).filter(([, p]) => p > 0.005);
+    if (rest.length) card.append(el("details", { class: "more-options" }, el("summary", { text: `${rest.length} more option${rest.length === 1 ? "" : "s"}` }),
+      el("ul", { class: "probs" }, rest.slice(0, 12).map(row))));
+  } else if (isNoul && !demo) {
+    card.append(el("ul", { class: "probs" }, el("li", { class: "chosen" }, el("span", { class: "opt", text: `${chosenText} (probability of yes: ${pct(chosenP)})` }),
+      el("span", { class: "pct", text: pct(shown) }), bar(shown))));
+  } else if (demo && probs) {
     const rest = Object.keys(probs).filter((k) => k !== chosenKey);
-    card.append(el("details", { class: "others" }, el("summary", { text: rest.length > 6 ? `6 of ${rest.length} other options` : `Other options (${rest.length})` }),
-      el("ul", {}, rest.slice(0, 6).map((k) => el("li", {}, el("span", { class: "other-text", text: options[k] || k }))))));
-  } else if (others.length && others.some(([, p]) => p > 0.005)) {
-    card.append(el("details", { class: "others" }, el("summary", { text: Object.keys(probs).length - 1 > others.length ? `Top ${others.length} of ${Object.keys(probs).length - 1} other options` : `Other options (${others.length})` }),
-      el("ul", {}, others.map(([k, p]) => el("li", {}, el("span", { class: "other-text", text: options[k] || k }), bar(p), el("span", { class: "other-p", text: `${Math.round(p * 100)}%` }))))));
+    if (rest.length) card.append(el("details", { class: "more-options" }, el("summary", { text: rest.length > 6 ? `6 of ${rest.length} other options` : `Other options (${rest.length})` }),
+      el("ul", { class: "probs" }, rest.slice(0, 6).map((k) => el("li", {}, el("span", { class: "opt", text: options[k] || k }))))));
+  }
+  if (developer() && result) {
+    const exchange = (result.exchanges || []).find((e) => e.questions && e.questions[d.key]);
+    if (exchange) card.append(el("details", { class: "raw-exchange" }, el("summary", { text: "Raw model exchange" }),
+      el("pre", { text: JSON.stringify({ question: exchange.questions[d.key], answer: exchange.answers[d.key], model: exchange.model }, null, 2) })));
   }
   return card;
 }
@@ -789,9 +842,10 @@ function panelDecided(panel, result) {
   if (!decisions.length) { panel.append(el("p", { class: "muted small", text: "No decisions were recorded for this answer." })); return; }
   const groups = { understand: [], values: [], structure: [] };
   for (const d of decisions) groups[STAGE_OF[d.purpose] || "structure"].push(d);
+  let number = 0;
   for (const [id, list] of Object.entries(groups)) {
     if (!list.length) continue;
-    panel.append(el("h4", { text: GROUP_TITLE[id] }), el("ol", { class: "decision-list" }, list.map((d) => decisionCard(d, result.provider === "demo"))));
+    panel.append(el("h4", { text: GROUP_TITLE[id] }), el("ol", { class: "decision-list" }, list.map((d) => decisionCard(d, result.provider === "demo", ++number, result))));
   }
 }
 
