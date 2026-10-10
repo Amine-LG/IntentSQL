@@ -219,6 +219,33 @@ def _openrouter_balance(key: str) -> str:
     return "balance: " + ", ".join(f"{k}={v}" for k, v in fields.items())
 
 
+def cmd_keys(args: argparse.Namespace) -> int:
+    """Store provider keys in ~/.config/intentsql/providers.env (0600), typed without echo."""
+    import getpass
+    import os
+
+    from intentsql.config import _read_env_file, config_dir
+    path = config_dir() / "providers.env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    values = _read_env_file(path) if path.is_file() else {}
+    for variable, label in (("OPENROUTER_API_KEY", "OpenRouter"), ("OPENJEV_API_KEY", "OpenJEV"),
+                            ("SYSTEM_ONE_API_KEY", "TypeSafe direct")):
+        entered = getpass.getpass(f"{label} API key (Enter to {'keep' if values.get(variable) else 'skip'}): ")
+        if entered.strip():
+            values[variable] = entered.strip()
+    if args.provider:
+        values["INTENTSQL_PROVIDER"] = args.provider
+    fd = os.open(path.with_suffix(".tmp"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write("".join(f"{k}={v}\n" for k, v in values.items()))
+    os.replace(path.with_suffix(".tmp"), path)
+    os.chmod(path, 0o600)
+    stored = [k for k in values if k.endswith("_API_KEY")]
+    print(f"Saved {', '.join(stored) or 'no keys'} to {path} (owner-only). Keys are not shown.")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
     uvicorn.run("intentsql.web:app", host=args.host, port=args.port, workers=1)
@@ -256,6 +283,10 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--suite", help="run a hand-written suite (benchmarks/suites/*.json) instead of Spider")
     bench.add_argument("--show-failures", action="store_true")
     bench.set_defaults(func=cmd_benchmark)
+
+    keys = sub.add_parser("keys", help="enter provider API keys (hidden input, stored owner-only)")
+    keys.add_argument("--provider", choices=("auto", "openrouter", "typesafe", "openjev", "mock"))
+    keys.set_defaults(func=cmd_keys)
 
     prov = sub.add_parser("provider", help="show the active Jev provider; check balance or ping it")
     prov.add_argument("--balance", action="store_true", help="OpenRouter: show credits (free call)")
