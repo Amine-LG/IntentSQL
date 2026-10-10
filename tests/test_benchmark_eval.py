@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from intentsql.benchmark.analysis import diagnose
 from intentsql.benchmark.exec_match import (
@@ -126,3 +127,20 @@ class RunnerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProviderFailureTest(unittest.TestCase):
+    def test_fatal_provider_errors_stop_the_run_instead_of_scoring_errors(self):
+        from intentsql.benchmark.suites import load_suite, run_suite
+        from intentsql.benchmark.systems import ProviderStopped, intentsql_system
+        from intentsql.jev import JevError
+        from intentsql.mock import MockClient
+
+        class Expired(MockClient):
+            def ask(self, *args, **kwargs):
+                raise JevError("key expired", fatal=True)
+
+        cases = load_suite(Path(__file__).resolve().parents[1] / "benchmarks" / "suites" / "smoke.json")[:2]
+        with mock.patch("intentsql.pipeline.shared_client", return_value=Expired()):
+            with self.assertRaises(ProviderStopped):
+                run_suite(intentsql_system(), cases, workers=1)

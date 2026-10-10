@@ -110,6 +110,8 @@ def _safe_predict(system: System, example: Example) -> Prediction:
     try:
         prediction = system(example.db_path, example.question)
     except Exception as exc:  # A crash is a recorded system error, not a runner failure.
+        if type(exc).__name__ == "ProviderStopped":
+            raise                # the whole run is invalid: never report it as results
         prediction = Prediction(ERROR, message=f"{type(exc).__name__}: {exc}")
     if not prediction.latency_ms:
         prediction.latency_ms = round((time.monotonic() - started) * 1000)

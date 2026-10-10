@@ -106,6 +106,8 @@ def run_suite(system: System, cases: list[SuiteCase], *, workers: int = 6) -> li
         try:
             prediction = system(case.database, case.question)
         except Exception as exc:     # recorded, not raised
+            if type(exc).__name__ == "ProviderStopped":
+                raise                # the whole run is invalid: never report it as results
             prediction = Prediction(ERROR, message=f"{type(exc).__name__}: {exc}")
         prediction.latency_ms = prediction.latency_ms or round((time.monotonic() - started) * 1000)
         return score(case, prediction)

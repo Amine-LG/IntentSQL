@@ -264,6 +264,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _guarded(run_benchmark):
+    """Report an evaluation stopped by a provider failure as interrupted, never as results."""
+    def wrapper(args: argparse.Namespace) -> int:
+        from intentsql.benchmark.systems import ProviderStopped
+        try:
+            return run_benchmark(args)
+        except ProviderStopped as exc:
+            print(f"\nINTERRUPTED: {exc}\nNo report was written; restart this evaluation once the "
+                  "provider works (do not combine partial runs or providers).", file=sys.stderr)
+            return 3
+    return wrapper
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="intent-sql", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -294,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--allow-test", action="store_true")
     bench.add_argument("--suite", help="run a hand-written suite (benchmarks/suites/*.json) instead of Spider")
     bench.add_argument("--show-failures", action="store_true")
-    bench.set_defaults(func=cmd_benchmark)
+    bench.set_defaults(func=_guarded(cmd_benchmark))
 
     keys = sub.add_parser("keys", help="enter provider API keys (hidden input, stored owner-only)")
     keys.add_argument("--provider", choices=("auto", "openrouter", "typesafe", "openjev", "mock"))

@@ -32,12 +32,21 @@ from typing import Any
 import httpx
 
 RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+FATAL_STATUS = {401, 402, 403, 404, 422}
 MAX_QUESTIONS_PER_REQUEST = 160
 MAX_CHARS_PER_REQUEST = 90_000          # default; providers set their own (context windows differ)
 
 
 class JevError(RuntimeError):
-    """Transport or protocol failure talking to Jev."""
+    """Transport or protocol failure talking to Jev.
+
+    ``fatal`` errors (bad key, no credits, spending limit, wrong endpoint, a provider that
+    stays unreachable after retries) will fail every request; batch evaluations stop on them
+    instead of recording a run of errors as results."""
+
+    def __init__(self, message: str, *, fatal: bool = False) -> None:
+        super().__init__(message)
+        self.fatal = fatal
 
 
 @dataclass(frozen=True)
@@ -189,7 +198,8 @@ class _Budget:
         with self.lock:
             if self.limit is not None and self.spent >= self.limit:
                 raise BudgetExceeded(f"The spending limit of ${self.limit:.2f} has been reached "
-                                     f"(${self.spent:.4f} spent); no further Jev requests are sent.")
+                                     f"(${self.spent:.4f} spent); no further Jev requests are sent.",
+                                     fatal=True)
 
     def add(self, cost: float | None) -> None:
         with self.lock:
@@ -281,14 +291,14 @@ class JevClient:
                     with lock:
                         usage.retries += 1
                     continue
-                raise JevError(f"{name} did not respond in time.") from exc
+                raise JevError(f"{name} did not respond in time.", fatal=True) from exc
             except httpx.HTTPError as exc:
                 if attempt <= self.max_retries:
                     with lock:
                         usage.retries += 1
                     time.sleep(0.3 * attempt)
                     continue
-                raise JevError(f"Could not reach {name}. Check the network.") from exc
+                raise JevError(f"Could not reach {name}. Check the network.", fatal=True) from exc
             if response.status_code == 200:
                 try:
                     data = response.json()
@@ -312,7 +322,8 @@ class JevClient:
                     delay = 0.5 * 2 ** (attempt - 1)
                 time.sleep(delay)
                 continue
-            raise JevError(self._error(response.status_code) + _detail(response, self._api_key))
+            raise JevError(self._error(response.status_code) + _detail(response, self._api_key),
+                           fatal=response.status_code in FATAL_STATUS or response.status_code in RETRYABLE)
 
     # -- public ------------------------------------------------------------------
     def ask(self, state: Any, questions: Mapping[str, Question], *, usage: Usage,

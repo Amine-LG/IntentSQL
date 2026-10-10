@@ -7,6 +7,11 @@ from pathlib import Path
 from intentsql.benchmark.runner import AMBIGUOUS, ANSWERED, ERROR, REFUSED, Prediction
 from intentsql.interpret import Strategy
 
+
+class ProviderStopped(RuntimeError):
+    """The provider failed in a way that would fail every case: stop the evaluation."""
+
+
 _STATUS = {"answered": ANSWERED, "ambiguous": AMBIGUOUS, "refused": REFUSED, "error": ERROR}
 
 
@@ -15,6 +20,8 @@ def intentsql_system(strategy: Strategy | None = None, *, keep_debug: bool = Fal
 
     def system(db_path: Path, question: str) -> Prediction:
         result = answer(db_path, question, strategy=strategy, execute=False)
+        if result.provider_failure:
+            raise ProviderStopped(result.message or "provider failure")
         trace = None
         if keep_debug:
             trace = {"explanation": result.explanation, "intent": result.intent,

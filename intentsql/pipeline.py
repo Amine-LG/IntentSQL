@@ -62,6 +62,7 @@ class Answer:
     intent: dict[str, Any] | None = None
     confidence: float | None = None       # calibrated probability (None: provider not calibrated)
     provider: str = ""
+    provider_failure: bool = False        # the provider cannot serve any request (key, credits, outage)
     verification: float | None = None     # raw verification probability of the chosen reading
     decisions: list[Decision] = field(default_factory=list)
     exchanges: list[Exchange] = field(default_factory=list)
@@ -276,7 +277,7 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
     try:
         interpretation, cands = interpret(grounding, ask, strategy)
     except JevError as exc:
-        result.message = str(exc)
+        result.message, result.provider_failure = str(exc), exc.fatal
         return result
     t = mark("interpret", t)
     result.decisions = interpretation.decisions
@@ -314,7 +315,7 @@ def answer(db_path: str | Path, question: str, *, client: JevClient | None = Non
         try:
             chosen, confidence = _verify(question, readings, ask, result)
         except JevError as exc:
-            result.message = str(exc)
+            result.message, result.provider_failure = str(exc), exc.fatal
             return result
         result.verification = confidence
         result.provider = getattr(getattr(client, "provider", None), "name", "") or result.usage.provider
