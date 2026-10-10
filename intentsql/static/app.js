@@ -205,7 +205,7 @@ function renderProviderDetail() {
       } }));
   }
   box.append(actions);
-  if (p.needs_key && !p.has_key) box.append(el("p", { class: "muted small", text: "After saving, use Test connection: IntentSQL sends two tiny questions, one Choice and one Noul (a fraction of a cent)." }));
+  if (p.needs_key && !p.has_key) box.append(el("p", { class: "muted small", text: "After saving, use Test connection: IntentSQL sends one tiny question of each decision type (a fraction of a cent)." }));
 }
 
 function testButton(p) {

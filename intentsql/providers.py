@@ -54,7 +54,7 @@ PROVIDERS: dict[str, Provider] = {
         "typesafe", "TypeSafe", "Jev", "https://api.typesafe.ai/v1/systemone", ("jev-latest",),
         ("SYSTEM_ONE_API_KEY", "TYPESAFE_API_KEY"),
         key_help="Create a key in the TypeSafe console: https://console.typesafe.ai",
-        max_chars_per_request=90_000, price_per_mtok=0.042,
+        max_chars_per_request=90_000, price_per_mtok=0.042, kinds=("choice", "noul", "score"),
         billing_hint="Add credits in the TypeSafe console (Settings > Billing).",
         docs="https://docs.typesafe.ai/concepts/system-one"),
     "liquid": Provider(

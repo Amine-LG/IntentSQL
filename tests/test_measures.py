@@ -87,6 +87,19 @@ class MeasureTest(unittest.TestCase):
         self.assertNotIn("STRFTIME", result.sql)            # 2024 is the reference, not a filter
 
 
+    def test_ordering_by_elapsed_time_uses_the_exact_value(self):
+        # Hires days apart round to the same number of years; the order must still follow the dates.
+        db = Path(self.tmp.name) / "staff.sqlite"
+        with sqlite3.connect(db) as conn:
+            conn.executescript("CREATE TABLE staff (id INTEGER PRIMARY KEY, name TEXT, hire_date DATE);"
+                               "INSERT INTO staff VALUES (1,'Ann','2020-01-20'),(2,'Bob','2020-01-02'),"
+                               "(3,'Cy','2018-06-01'),(4,'Di','2020-01-10');")
+        result = answer(db, "Show staff names by seniority, longest-serving first.", client=ScriptedJev([
+            ("^out_", "staff name in", "itself"),
+            ("^order$", "", "years since hire date.*highest first")]))
+        self.assertEqual(result.rows, [("Cy",), ("Bob",), ("Di",), ("Ann",)])
+        self.assertNotIn("ROUND", result.sql.split("ORDER BY")[1])
+
     def test_parent_amount_minus_total_of_related_amounts(self):
         # Department budgets minus the total salaries of their employees (retail fixture).
         db = Path(__file__).resolve().parents[1] / "benchmarks" / "fixtures" / "retail.sqlite"

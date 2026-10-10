@@ -60,11 +60,11 @@ On first start, IntentSQL asks you to choose a model. Nothing is chosen silently
 | **Demo mode** | none | — | Fixed default choices, so you can explore the app. It does not understand questions. |
 | **Custom model** | yours | — | Any endpoint that implements the System One decision protocol. Configured by you, not verified by IntentSQL |
 
-- **In the app:** click the model button at the top right, paste a key, **Save**, then **Test connection**. Test connection sends two tiny questions, costing a fraction of a cent. The state reads *Connected* only after a real answer. Otherwise it shows *Key rejected*, *No credits*, *Unavailable*, *Incompatible* or *Not configured*, with the provider's own message.
+- **In the app:** click the model button at the top right, paste a key, **Save**, then **Test connection**. Test connection sends one tiny question of each decision type, costing a fraction of a cent. The state reads *Connected* only after a real answer. Otherwise it shows *Key rejected*, *No credits*, *Unavailable*, *Incompatible* or *Not configured*, with the provider's own message.
 - **On the command line:**
   ```bash
   intent-sql keys typesafe        # or: liquid, demo. The key is typed without echo
-  intent-sql provider --test      # two tiny test questions
+  intent-sql provider --test      # one tiny question per decision type
   ```
 - **With environment variables** (servers, Docker): set `SYSTEM_ONE_API_KEY` (TypeSafe) or `LIQUID_API_KEY`. `INTENTSQL_PROVIDER=typesafe|liquid|demo|custom:<id>` locks the choice; the app then says so. Optionally, `INTENTSQL_BUDGET_USD` stops requests at a spending limit.
 

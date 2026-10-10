@@ -224,6 +224,16 @@ class _Scope:
         return ir.Col(self.alias(self.schema.table(column.table).name), column.name)
 
 
+def _unrounded(expr: ir.Expr) -> ir.Expr:
+    """Sort by the exact value: rounding for display (elapsed years) would create ties and
+    lose the order the request asks for ('longest-serving first')."""
+    if isinstance(expr, ir.Func) and expr.name == "ROUND":
+        return expr.args[0]
+    if isinstance(expr, ir.Agg) and isinstance(expr.arg, ir.Func) and expr.arg.name == "ROUND":
+        return replace(expr, arg=expr.arg.args[0])
+    return expr
+
+
 def _from(schema: Schema, tables: list[str], root: str, prefix: str,
           join_choices: dict[str, str], left: bool = False) -> tuple[ir.From, _Scope]:
     steps = schema.join_tree(tables, root)
@@ -731,7 +741,7 @@ def _select(schema: Schema, intent: Intent, prefix: str, join_choices: dict[str,
     groups = tuple(scope.col(key) for key in _effective_groups(intent, schema))
     order = tuple(ir.OrderItem(_count_expr(schema, scope, o.table, fanned, outer)
                                if o.func == "COUNT" and o.column is None else
-                               _agg_expr(scope, o.func, o.column, o.table), o.desc)
+                               _unrounded(_agg_expr(scope, o.func, o.column, o.table)), o.desc)
                   for o in intent.order)
     return ir.Select(items=items, from_=from_, where=where, group_by=groups,
                      having=ir.conjoin(having_conds), order_by=order, limit=intent.limit,
