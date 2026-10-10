@@ -28,6 +28,7 @@ from intentsql.config import PROJECT_ROOT, settings
 from intentsql.examples import examples
 from intentsql.jev import reset_shared_client, shared_client
 from intentsql.pipeline import answer
+from intentsql.providers import PROVIDERS
 from intentsql.schema import load_schema, quote_identifier
 from intentsql.workspace import (
     WorkspaceError,
@@ -91,12 +92,14 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "version": __version__}
+    client = shared_client()
+    return {"ok": True, "version": __version__, "provider": client.provider.name, "model": client.model}
 
 
 # ---- connection ---------------------------------------------------------------------
 
 class ConnectionInput(BaseModel):
+    provider: str | None = Field(default=None, max_length=40)
     url: str | None = Field(default=None, max_length=500)
     model: str | None = Field(default=None, max_length=200)
     api_key: str | None = Field(default=None, max_length=500)
@@ -104,15 +107,23 @@ class ConnectionInput(BaseModel):
 
 @app.get("/api/connection")
 def get_connection() -> dict[str, Any]:
+    """The active provider and which providers have a key -- never a key itself."""
     cfg = settings()
-    return {"url": cfg.jev_url, "model": cfg.jev_model, "has_key": bool(cfg.jev_api_key)}
+    client = shared_client()
+    return {**client.describe(), "requested": cfg.provider_requested,
+            "providers": [{"name": p.name, "label": p.label, "model": p.model,
+                           "has_key": p.name in cfg.keys_present or p.offline}
+                          for p in PROVIDERS.values()]}
 
 
 @app.post("/api/connection")
 def set_connection(body: ConnectionInput) -> dict[str, Any]:
     if body.url and not body.url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
         raise HTTPException(400, "Use an https:// endpoint (http is allowed only for localhost).")
-    save_connection(body.url, body.model, body.api_key)
+    try:
+        save_connection(body.url, body.model, body.api_key, provider=body.provider)
+    except WorkspaceError as exc:
+        raise HTTPException(400, str(exc)) from exc
     reset_shared_client()
     return get_connection()
 
@@ -181,8 +192,10 @@ class AskInput(BaseModel):
 @app.post("/api/ask")
 def ask(body: AskInput) -> dict[str, Any]:
     entry = _entry(body.database)
-    if not shared_client().configured:
-        raise HTTPException(400, "No Jev API key is configured yet. Open Settings (the gear icon) to add one.")
+    client = shared_client()
+    if not client.configured:
+        raise HTTPException(400, f"No API key is configured for {client.provider.label}. "
+                                 "Open Settings (the gear icon) to add one or choose another provider.")
     result = answer(entry.path, body.question)
     return _safe(result.to_dict(debug=True))
 
@@ -191,8 +204,10 @@ def ask(body: AskInput) -> dict[str, Any]:
 def ask_stream(body: AskInput) -> StreamingResponse:
     """The same answer as /api/ask, preceded by progress events (server-sent events)."""
     entry = _entry(body.database)
-    if not shared_client().configured:
-        raise HTTPException(400, "No Jev API key is configured yet. Open Settings (the gear icon) to add one.")
+    client = shared_client()
+    if not client.configured:
+        raise HTTPException(400, f"No API key is configured for {client.provider.label}. "
+                                 "Open Settings (the gear icon) to add one or choose another provider.")
     events: queue.Queue[tuple[str, Any] | None] = queue.Queue()
 
     def run() -> None:

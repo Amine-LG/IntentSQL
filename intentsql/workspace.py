@@ -154,15 +154,28 @@ def saved_connection() -> dict[str, Any]:
         return {}
 
 
-def save_connection(url: str | None, model: str | None, api_key: str | None) -> None:
-    """Persist endpoint/model, and the key only when a new one is supplied."""
+def save_connection(url: str | None, model: str | None, api_key: str | None, *,
+                    provider: str | None = None) -> None:
+    """Persist the provider choice, endpoint/model overrides (TypeSafe direct only) and a
+    key for ``provider`` (or the active provider) only when a new one is supplied."""
+    from intentsql.providers import PROVIDERS
     current = saved_connection()
+    if provider is not None:
+        if provider != "auto" and provider not in PROVIDERS:
+            raise WorkspaceError(f"Unknown provider {provider}")
+        current["provider"] = provider
     if url is not None:
         current["url"] = url.strip()
     if model is not None:
         current["model"] = model.strip()
     if api_key:
-        current["api_key"] = api_key.strip()
+        target = provider if provider and provider != "auto" else settings().provider
+        raw = current.get("keys")
+        keys: dict[str, str] = raw if isinstance(raw, dict) else {}
+        keys[target] = api_key.strip()
+        current["keys"] = keys
+        if target == "typesafe":
+            current.pop("api_key", None)
     path = connection_file()
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

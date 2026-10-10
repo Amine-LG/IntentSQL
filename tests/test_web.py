@@ -16,6 +16,8 @@ class WebTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = mock.patch.dict(os.environ, {"INTENTSQL_WORKSPACE": self.tmp.name,
                                                 "SYSTEM_ONE_API_KEY": "", "TYPESAFE_API_KEY": "",
+                                                "OPENROUTER_API_KEY": "", "OPENJEV_API_KEY": "",
+                                                "INTENTSQL_PROVIDER": "", "XDG_CONFIG_HOME": self.tmp.name,
                                                 "INTENTSQL_NO_DOTENV": "1"})
         self.env.start()
         from intentsql import config, jev, web
@@ -74,10 +76,17 @@ class WebTest(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_connection_key_is_saved_privately_and_never_returned(self):
-        response = self.client.post("/api/connection", json={"url": "https://api.typesafe.ai/v1/systemone",
-                                                             "model": "jev-latest", "api_key": "secret-key"})
-        self.assertEqual(response.json(), {"url": "https://api.typesafe.ai/v1/systemone",
-                                           "model": "jev-latest", "has_key": True})
+        response = self.client.post("/api/connection", json={"provider": "typesafe", "api_key": "secret-key"})
+        data = response.json()
+        self.assertEqual((data["provider"], data["model"], data["has_key"]), ("typesafe", "jev-latest", True))
+        self.assertNotIn("secret-key", response.text)
+        switched = self.client.post("/api/connection", json={"provider": "openrouter",
+                                                             "api_key": "other-secret"}).json()
+        self.assertEqual((switched["provider"], switched["model"]), ("openrouter", "typesafe/jev-1.13"))
+        self.assertEqual({p["name"] for p in switched["providers"] if p["has_key"]},
+                         {"typesafe", "openrouter", "mock"})
+        self.assertNotIn("other-secret", self.client.get("/api/connection").text)
+        self.assertEqual(self.client.get("/api/health").json()["provider"], "openrouter")
         self.assertNotIn("secret-key", self.client.get("/api/connection").text)
         path = Path(self.tmp.name) / "connection.json"
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)

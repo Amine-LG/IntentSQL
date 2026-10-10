@@ -58,7 +58,7 @@
   <main id="main">
     <section id="welcome" class="card welcome" hidden>
       <h1>Connect IntentSQL to Jev</h1>
-      <p>IntentSQL turns questions into SQL by asking Jev, TypeSafe's decision model, small grounded questions about your database. Add your API key to start; it stays on this computer.</p>
+      <p>IntentSQL turns questions into SQL by asking Jev, TypeSafe's decision model, small grounded questions about your database. Choose a provider (OpenRouter, TypeSafe or OpenJEV) and add its API key to start; the key stays on this computer.</p>
       <button id="welcome-settings" class="button primary" type="button">Add API key</button>
     </section>
 
@@ -133,11 +133,15 @@
   <form method="dialog" id="settings-form">
     <h2 id="settings-title">Settings</h2>
     <fieldset>
-      <legend>Jev connection</legend>
-      <p class="muted small">Your key is saved only in your local IntentSQL workspace and is never sent back to the page.</p>
-      <label>API key <input id="conn-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
-      <details class="advanced"><summary>Advanced</summary>
-        <label>Endpoint <input id="conn-url" type="url" required></label>
+      <legend>Jev provider</legend>
+      <label>Provider
+        <select id="conn-provider"></select>
+      </label>
+      <p id="conn-provider-note" class="muted small"></p>
+      <label>API key for this provider <input id="conn-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+      <p class="muted small">Keys are saved only in your local IntentSQL workspace and are never sent back to the page.</p>
+      <details class="advanced" id="conn-advanced"><summary>Advanced (TypeSafe direct)</summary>
+        <label>Endpoint <input id="conn-url" type="url"></label>
         <label>Model <input id="conn-model" type="text"></label>
       </details>
       <p id="conn-status" class="muted small" role="status"></p>

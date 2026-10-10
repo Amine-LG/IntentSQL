@@ -114,11 +114,30 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     if args.out:
         meta = {"split": args.split, "size": args.size, "batches": args.batches, "seeds": seeds,
                 "by": args.by, "strategy": args.strategy, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                                                                time.gmtime())}
+                                                                                time.gmtime()),
+                **_provenance()}
         write_report(Path(args.out), meta, all_cases, overall,
                      {"batch_summaries": summaries, "batch_statistics": stats})
         print(f"report written to {args.out}")
     return 0
+
+
+def _provenance() -> dict[str, Any]:
+    """Provider, model and code revision of a benchmark run (no secrets)."""
+    import subprocess
+
+    from intentsql.config import PROJECT_ROOT
+    from intentsql.jev import shared_client
+    info = shared_client().describe()
+    try:
+        revision = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT,
+                                  capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                    cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=5).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        revision, dirty = "", False
+    return {"provider": info["provider"], "provider_label": info["label"], "model": info["model"],
+            "revision": revision + ("+dirty" if dirty else "")}
 
 
 def _run_suite(args: argparse.Namespace) -> int:
@@ -139,11 +158,65 @@ def _run_suite(args: argparse.Namespace) -> int:
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps({
-            "suite": args.suite, "summary": summary,
+            "suite": args.suite, "summary": summary, "meta": {**_provenance(), "time": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
             "results": [{"id": r.case.id, "category": r.case.category, "question": r.case.question,
                          "status": r.status, "correct": r.correct, "sql": r.sql, "message": r.message,
                          "confidence": r.confidence} for r in results]}, indent=1))
     return 0
+
+
+def cmd_provider(args: argparse.Namespace) -> int:
+    """Show the active provider; optionally check the account and send one tiny decision."""
+    from intentsql.config import settings
+    from intentsql.jev import JevError, Usage, choice, noul, score, shared_client
+    cfg = settings()
+    client = shared_client()
+    info = client.describe()
+    print(f"provider: {info['label']} [{info['provider']}] (requested: {cfg.provider_requested})")
+    print(f"endpoint: {info['url'] or '-'}  model: {info['model']}  key: {'set' if info['has_key'] else 'missing'}")
+    print(f"keys available for: {', '.join(cfg.keys_present) or 'none'}")
+    if args.balance and info["provider"] == "openrouter" and info["has_key"]:
+        print(_openrouter_balance(cfg.key_for("openrouter")))
+    if args.ping:
+        usage = Usage()
+        try:
+            answers = client.ask({"ticket": "I was charged twice for one subscription."}, {
+                "team": choice("Which team should handle `ticket`?",
+                               {"billing": "charges and refunds", "technical": "bugs"}),
+                "urgency": score("How urgent is `ticket`?", ["routine", "soon", "blocked now"]),
+                "refund": noul("Is `ticket` asking for money back?")}, usage=usage)
+        except JevError as exc:
+            print(f"ping failed: {exc}")
+            return 1
+        print(f"ping: choice={answers['team'].choice} score={answers['urgency'].score} "
+              f"noul={answers['refund'].p:.2f} model={','.join(usage.models)} "
+              f"tokens={usage.input_tokens}/{usage.output_tokens} cost=${usage.cost_usd:.6f}")
+    return 0
+
+
+def _openrouter_balance(key: str) -> str:
+    """Account balance from OpenRouter's key endpoint (no model call, no cost)."""
+    import httpx
+    try:
+        response = httpx.get("https://openrouter.ai/api/v1/key",
+                             headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        data = response.json().get("data", {}) if response.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError):
+        data = {}
+    if not data:
+        return "balance: unavailable"
+    fields = {k: data.get(k) for k in ("usage", "limit", "limit_remaining", "is_free_tier")}
+    try:
+        credits = httpx.get("https://openrouter.ai/api/v1/credits",
+                            headers={"Authorization": f"Bearer {key}"}, timeout=15)
+        totals = credits.json().get("data", {}) if credits.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError):
+        totals = {}
+    if totals:
+        fields["total_credits"] = totals.get("total_credits")
+        fields["total_usage"] = totals.get("total_usage")
+    return "balance: " + ", ".join(f"{k}={v}" for k, v in fields.items())
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -183,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--suite", help="run a hand-written suite (benchmarks/suites/*.json) instead of Spider")
     bench.add_argument("--show-failures", action="store_true")
     bench.set_defaults(func=cmd_benchmark)
+
+    prov = sub.add_parser("provider", help="show the active Jev provider; check balance or ping it")
+    prov.add_argument("--balance", action="store_true", help="OpenRouter: show credits (free call)")
+    prov.add_argument("--ping", action="store_true", help="send one tiny choice/score/noul decision")
+    prov.set_defaults(func=cmd_provider)
 
     serve = sub.add_parser("serve", help="start the web app")
     serve.add_argument("--host", default="127.0.0.1")

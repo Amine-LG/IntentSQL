@@ -3,10 +3,21 @@ import unittest
 
 import httpx
 
-from intentsql.jev import MAX_QUESTIONS_PER_REQUEST, JevClient, JevError, Usage, _chunk, choice, noul
+from intentsql.jev import (
+    MAX_QUESTIONS_PER_REQUEST,
+    BudgetExceeded,
+    JevClient,
+    JevError,
+    Usage,
+    _chunk,
+    choice,
+    noul,
+    score,
+)
 
 
 def client_with(handler, **kwargs):
+    kwargs.setdefault("provider", "typesafe")
     client = JevClient(url="https://jev.test/v1/systemone", model="jev-test", api_key="k-secret",
                        cache_dir="", **kwargs)
     client._http = httpx.Client(transport=httpx.MockTransport(handler))
@@ -92,7 +103,7 @@ class JevClientTest(unittest.TestCase):
         with self.assertRaises(JevError) as ctx:
             client_with(handler).ask({}, {"a": noul("q?")}, usage=Usage())
         self.assertEqual(calls["n"], 1)
-        self.assertIn("no API credits", str(ctx.exception))
+        self.assertIn("no credits left", str(ctx.exception))
 
     def test_large_fan_out_is_chunked_and_merged(self):
         questions = {f"q{i}": noul(f"question {i}?") for i in range(MAX_QUESTIONS_PER_REQUEST + 5)}
@@ -105,3 +116,92 @@ class JevClientTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProviderTest(unittest.TestCase):
+    """Request format, accounting and provenance per provider (no network)."""
+
+    def test_openrouter_request_cost_score_and_provenance(self):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["auth"] = request.headers.get("authorization")
+            body = json.loads(request.content)
+            seen["body"] = body
+            return httpx.Response(200, json={
+                "model": "typesafe/jev-1.13-20260917", "id": "gen-dec-1", "provider": "TypeSafe",
+                "answers": {"team": {"type": "choice", "choice": "billing", "confidence": 1,
+                                     "probabilities": {"billing": 1, "technical": 0}},
+                            "urgency": {"type": "score", "score": 2, "confidence": 1,
+                                        "probabilities": {"0": 0, "1": 0, "2": 1}},
+                            "refund": {"type": "noul", "noul": 0.82}},
+                "usage": {"input_tokens": 447, "output_tokens": 69, "cost": 0.000018774}})
+
+        client = JevClient(api_key="k-secret", provider="openrouter", cache_dir="")
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        usage, log = Usage(), []
+        answers = client.ask({"ticket": "charged twice"}, {
+            "team": choice("Which team?", {"billing": "money", "technical": "bugs"}),
+            "urgency": score("How urgent?", ["routine", "soon", "now"]),
+            "refund": noul("Refund requested?")}, usage=usage, log=log)
+        self.assertEqual(seen["url"], "https://openrouter.ai/api/alpha/decisions")
+        self.assertEqual(seen["auth"], "Bearer k-secret")
+        self.assertEqual(seen["body"]["model"], "typesafe/jev-1.13")
+        self.assertEqual(seen["body"]["questions"]["urgency"]["criteria"], ["routine", "soon", "now"])
+        self.assertEqual(answers["team"].choice, "billing")
+        self.assertEqual(answers["urgency"].score, 2.0)
+        self.assertAlmostEqual(answers["refund"].p, 0.82)
+        self.assertAlmostEqual(usage.cost_usd, 0.000018774)
+        self.assertEqual(usage.models, ["typesafe/jev-1.13-20260917"])
+        self.assertEqual((log[0].provider, log[0].request_id), ("openrouter", "gen-dec-1"))
+        self.assertNotIn("k-secret", json.dumps([e.__dict__ for e in log], default=str))
+        self.assertNotIn("k-secret", json.dumps(client.describe()))
+
+    def test_budget_stops_requests(self):
+        def handler(request):
+            return httpx.Response(200, json={
+                "model": "m", "answers": {"a": {"type": "noul", "noul": 0.5}},
+                "usage": {"input_tokens": 10, "output_tokens": 1, "cost": 0.01}})
+
+        client = JevClient(api_key="k", provider="openrouter", cache_dir="", budget_usd=0.015)
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        client.ask({}, {"a": noul("q?")}, usage=Usage())
+        client.ask({}, {"a": noul("q?")}, usage=Usage())          # 0.02 spent: limit now reached
+        with self.assertRaises(BudgetExceeded):
+            client.ask({}, {"a": noul("q?")}, usage=Usage())
+
+    def test_errors_name_the_provider_and_never_fall_back(self):
+        calls = []
+
+        def handler(request):
+            calls.append(str(request.url))
+            return httpx.Response(402)
+
+        client = JevClient(api_key="k", provider="openrouter", cache_dir="")
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        with self.assertRaises(JevError) as ctx:
+            client.ask({}, {"a": noul("q?")}, usage=Usage())
+        self.assertIn("OpenRouter", str(ctx.exception))
+        self.assertEqual(set(calls), {"https://openrouter.ai/api/alpha/decisions"})
+
+    def test_provider_selection_from_configuration(self):
+        import os
+        import tempfile
+        from unittest import mock
+
+        from intentsql import config
+        with tempfile.TemporaryDirectory() as tmp:
+            base = {"INTENTSQL_WORKSPACE": tmp, "INTENTSQL_NO_DOTENV": "1", "XDG_CONFIG_HOME": tmp,
+                    "SYSTEM_ONE_API_KEY": "", "TYPESAFE_API_KEY": "", "OPENROUTER_API_KEY": "",
+                    "OPENJEV_API_KEY": "", "INTENTSQL_PROVIDER": ""}
+            cases = [({"OPENJEV_API_KEY": "j", "OPENROUTER_API_KEY": "o"}, "openrouter"),
+                     ({"OPENJEV_API_KEY": "j"}, "openjev"),
+                     ({"OPENROUTER_API_KEY": "o", "INTENTSQL_PROVIDER": "openjev"}, "openjev"),
+                     ({"INTENTSQL_PROVIDER": "mock"}, "mock")]
+            for env, expected in cases:
+                with self.subTest(env=env), mock.patch.dict(os.environ, {**base, **env}):
+                    config.settings.cache_clear()
+                    cfg = config.settings()
+                    self.assertEqual(cfg.provider, expected)
+            config.settings.cache_clear()

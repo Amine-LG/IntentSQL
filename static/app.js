@@ -75,10 +75,19 @@ const developer = () => Boolean(store("intentsql.developer"));
 async function refreshConnection() {
   try {
     const conn = await api("/api/connection");
-    $("#conn-dot").className = "dot " + (conn.has_key ? "ok" : "bad");
+    state.connection = conn;
+    const ready = conn.has_key || conn.provider === "mock";
+    $("#conn-dot").className = "dot " + (ready ? "ok" : "bad");
+    $("#open-settings").title = `Settings · ${conn.label}`;
+    const picker = $("#conn-provider");
+    picker.replaceChildren(el("option", { value: "auto", text: "Automatic (first provider with a key)" }),
+      ...conn.providers.map((p) => el("option", { value: p.name, text: `${p.label}${p.has_key ? "" : " · no key"}` })));
+    picker.value = conn.requested === "auto" ? "auto" : conn.provider;
     $("#conn-url").value = conn.url; $("#conn-model").value = conn.model;
-    $("#conn-status").textContent = conn.has_key ? "Connected: a key is saved." : "No API key saved yet.";
-    $("#welcome").hidden = conn.has_key;
+    $("#conn-advanced").hidden = conn.provider !== "typesafe";
+    $("#conn-provider-note").textContent = `Active: ${conn.label} · model ${conn.model}`;
+    $("#conn-status").textContent = ready ? "Ready." : "No API key saved for this provider yet.";
+    $("#welcome").hidden = ready;
     return conn;
   } catch {
     $("#conn-dot").className = "dot bad";
@@ -97,11 +106,18 @@ $("#open-settings").addEventListener("click", openSettings);
 $("#welcome-settings").addEventListener("click", openSettings);
 $("#theme-select").addEventListener("change", (e) => { store("intentsql.theme", e.target.value || null); applyTheme(e.target.value); });
 $("#developer").addEventListener("change", (e) => { store("intentsql.developer", e.target.checked); if (state.result) renderHow(); });
+$("#conn-provider").addEventListener("change", () => {
+  $("#conn-advanced").hidden = $("#conn-provider").value !== "typesafe";
+  $("#conn-key").value = "";
+});
 $("#conn-save").addEventListener("click", async (event) => {
   event.preventDefault();
   try {
+    const provider = $("#conn-provider").value;
+    const typesafe = provider === "typesafe";
     await api("/api/connection", { method: "POST", body: JSON.stringify({
-      url: $("#conn-url").value, model: $("#conn-model").value, api_key: $("#conn-key").value || null }) });
+      provider, api_key: $("#conn-key").value || null,
+      url: typesafe ? $("#conn-url").value || null : null, model: typesafe ? $("#conn-model").value || null : null }) });
     $("#conn-key").value = "";
     await refreshConnection();
     $("#settings-dialog").close();
@@ -435,8 +451,11 @@ function renderHow() {
   body.replaceChildren();
   if (!result) return;
   const t = result.timings_ms || {}; const u = result.usage || {};
+  const providerLabel = (state.connection && state.connection.providers || []).find((p) => p.name === u.provider)?.label || u.provider;
+  const cost = u.cost_usd ? ` · $${Number(u.cost_usd).toFixed(5)}` : "";
   const items = [["Total time", t.total !== undefined ? `${t.total} ms` : "—"],
-    ["Jev", u.calls ? `${plural(u.calls, "call")} · ${(u.input_tokens || 0).toLocaleString()} input tokens` : "—"]];
+    ["Jev", u.calls ? `${plural(u.calls, "call")} · ${(u.input_tokens || 0).toLocaleString()} input tokens${cost}` : "—"],
+    ["Provider", providerLabel ? `${providerLabel}${(u.models || []).length ? ` (${u.models.join(", ")})` : ""}` : "—"]];
   if (result.confidence !== null && result.confidence !== undefined) {
     items.push(["Confidence", `about ${Math.round(result.confidence * 100)}% of answers like this were correct in testing`]);
   }
