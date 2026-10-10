@@ -82,7 +82,7 @@ def _output(schema: Schema, item: OutputItem, subject: str | None) -> str:
     if item.column is None:
         return f"the number of {plural(entity(schema, item.table or ''))}"
     label = _label(schema, item.column, subject)
-    if item.func is None:
+    if item.func is None or item.func == "EXPR":
         return label
     if item.func == "COUNT":
         return f"the number of different {label} values" if item.distinct else f"the number of {label} values"
@@ -198,6 +198,8 @@ def _order(schema: Schema, order: Ordering, subject: str | None) -> str:
     if order.column is None:
         return f"by number of {plural(entity(schema, order.table or ''))}, {'most' if order.desc else 'fewest'} first"
     label = _label(schema, order.column, subject)
+    if order.func == "EXPR":
+        return f"by {label}, {'highest' if order.desc else 'lowest'} first"
     if order.func:
         return f"by {FUNC[order.func]} {label}, {'highest' if order.desc else 'lowest'} first"
     column = schema.column(order.column)

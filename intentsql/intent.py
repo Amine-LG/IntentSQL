@@ -33,7 +33,7 @@ class PlanError(ValueError):
 
 @dataclass(frozen=True)
 class OutputItem:
-    func: str | None = None          # None | COUNT | SUM | AVG | MIN | MAX | PCT
+    func: str | None = None          # None | COUNT | SUM | AVG | MIN | MAX | PCT | EXPR (aggregate measure)
     column: str | None = None        # "table.column"; None means COUNT(*) of ``table``
     table: str | None = None
     distinct: bool = False           # COUNT(DISTINCT column)
@@ -208,6 +208,8 @@ class _Scope:
             op, left, right = column.formula
             if op in DATE_PARTS:
                 return ir.Func("STRFTIME", (ir.Lit(DATE_PARTS[op]), self.col(left)))
+            if op == "minus_sum":
+                return ir.BinOp("-", self.col(left), ir.Agg("SUM", self.col(right)))
             if op.startswith("since_"):
                 reference = right.split(":", 1)[1]
                 days = ir.BinOp("-", ir.Func("JULIANDAY", (ir.Lit(reference),)),
@@ -250,7 +252,7 @@ def _agg_expr(scope: _Scope, func: str | None, column: str | None, table: str | 
     if column is None:
         return ir.Agg("COUNT", ir.Star())
     expr = scope.col(column)
-    return ir.Agg(func, expr, distinct) if func else expr
+    return ir.Agg(func, expr, distinct) if func and func != "EXPR" else expr
 
 
 def _condition(schema: Schema, scope: _Scope, cond: Condition, counter: list[int],
@@ -672,6 +674,8 @@ def output_name(schema: Schema, item: OutputItem) -> str | None:
         return f"number of {'distinct ' if item.distinct else ''}{column.label}"
     if item.per:
         return f"{FUNC_WORDS[item.func or 'AVG']} {column.label} per {entity(schema, item.per)}"
+    if item.func == "EXPR":
+        return column.label
     return f"{FUNC_WORDS[item.func]} {column.label}"
 
 

@@ -87,6 +87,19 @@ class MeasureTest(unittest.TestCase):
         self.assertNotIn("STRFTIME", result.sql)            # 2024 is the reference, not a filter
 
 
+    def test_parent_amount_minus_total_of_related_amounts(self):
+        # Department budgets minus the total salaries of their employees (retail fixture).
+        db = Path(__file__).resolve().parents[1] / "benchmarks" / "fixtures" / "retail.sqlite"
+        result = self.ask(db, "How much budget does each department have left after paying salaries?", [
+            ("^out_", "show the department name in", "itself"),
+            ("^out_", "budget left after the total", "budget left")])
+        with sqlite3.connect(db) as conn:
+            gold = conn.execute("SELECT T2.name, T2.budget - SUM(T1.salary) FROM employees T1 JOIN departments T2 "
+                                "ON T1.department_id = T2.id GROUP BY T2.id").fetchall()
+        as_sets = lambda rows: sorted(tuple(sorted(map(str, r))) for r in rows)  # noqa: E731 (column order free)
+        self.assertEqual(as_sets(result.rows), as_sets(gold))
+
+
 class SelfReferenceTest(unittest.TestCase):
     """employees.manager_id (undeclared) is a self-reference: the manager is a role table."""
 

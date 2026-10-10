@@ -20,6 +20,7 @@ from pathlib import Path
 from intentsql.text import humanize, lemma
 
 NUMBER, TEXT, DATE, BOOLEAN, OTHER = "number", "text", "date", "boolean", "other"
+AGGREGATE_FORMULAS = frozenset({"minus_sum", "plus_sum"})
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?)?$")
 _NUMERIC = re.compile(r"^\s*[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?\s*$")
@@ -61,6 +62,11 @@ class Column:
     @property
     def is_numeric(self) -> bool:
         return self.kind == NUMBER
+
+    @property
+    def aggregated(self) -> bool:
+        """A derived measure that aggregates related rows (budget minus total salaries)."""
+        return self.formula is not None and self.formula[0] in AGGREGATE_FORMULAS
 
     @property
     def is_identifier(self) -> bool:

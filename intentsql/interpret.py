@@ -303,6 +303,11 @@ def build_candidates(g: Grounding, strategy: Strategy) -> Candidates:
     # Outputs: one exclusive choice per column class.
     for i, column in enumerate(columns):
         phrase = column_phrase(schema, column.key)
+        if column.aggregated:
+            # Already a per-record aggregate: shown as is (the 'value' of each group).
+            cands.outputs.append(OutputGroup(f"o{i}", phrase, [Option(
+                "value", f"the {phrase} (one value per result row)", OutputItem("EXPR", column.key))]))
+            continue
         options = [Option("value", f"the {phrase} itself (one value per result row)",
                           OutputItem(None, column.key))]
         if column.is_numeric and not column.is_identifier:
@@ -547,6 +552,10 @@ def _order_candidates(g: Grounding, cands: Candidates, columns: list[Column]) ->
         if column.is_identifier and not column.primary_key:
             continue
         phrase = column_phrase(schema, column.key)
+        if column.aggregated:
+            add(f"by {phrase}, highest first", Ordering("EXPR", column.key, None, True))
+            add(f"by {phrase}, lowest first", Ordering("EXPR", column.key, None, False))
+            continue
         if column.kind in (NUMBER, DATE):
             hi, lo = ("latest", "earliest") if column.kind == DATE else ("highest", "lowest")
             add(f"by {phrase}, {hi} first", Ordering(None, column.key, None, True))

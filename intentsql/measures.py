@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from intentsql.schema import DATE, NUMBER, TEXT, Column, Schema
+from intentsql.schema import AGGREGATE_FORMULAS, DATE, NUMBER, TEXT, Column, Schema
 
 MAX_MEASURES = 6
 
@@ -106,6 +106,7 @@ def derive(question: str, schema: Schema, column_link: dict[str, float],
                     proposals.append((part, date.key, date.key, f"{date.label} {part}"))
 
     proposals += _elapsed(question, schema, column_link)
+    proposals += _remaining(question, schema, column_link)
 
     columns: list[Column] = []
     seen: set[tuple[str, str, str]] = set()
@@ -113,7 +114,8 @@ def derive(question: str, schema: Schema, column_link: dict[str, float],
         if (op, left_key, right_key) in seen or len(columns) >= MAX_MEASURES:
             continue
         seen.add((op, left_key, right_key))
-        host = _host(schema, left_key, right_key)
+        # An aggregate formula belongs to the parent (budget minus its employees' salaries).
+        host = left_key.split(".")[0] if op in AGGREGATE_FORMULAS else _host(schema, left_key, right_key)
         if op in PART_KINDS:
             columns.append(Column(host, f"__m{len(columns) + 1}", "", PART_KINDS[op], False, False,
                                   label, PART_COUNTS[op], None, "text", 0, (op, left_key, right_key)))
@@ -150,6 +152,28 @@ def _elapsed(question: str, schema: Schema, column_link: dict[str, float]) -> li
         what = "age" if BIRTH.search(date.label) and unit == "years" else f"{unit} since {date.label}"
         proposals.append((f"since_{unit}", date.key, f"{origin}:{reference}",
                           f"{what} (as of {reference}{', today' if origin == 'today' else ''})"))
+    return proposals
+
+
+REMAINING_CUE = re.compile(r"\b(left|remain\w*|after (?:paying|subtracting|deducting|spending|all)|net of|"
+                           r"surplus|deficit|leftover|over budget|under budget|unspent|unused)\b", re.I)
+
+
+def _remaining(question: str, schema: Schema, column_link: dict[str, float]) -> list[tuple[str, str, str, str]]:
+    """'budget left after paying salaries': a record's amount minus the total of an amount
+    over its related records (an aggregate across two levels)."""
+    if not REMAINING_CUE.search(question):
+        return []
+    proposals = []
+    named = [c for c in schema.columns if column_link.get(c.key, 0) >= 0.5 and c.kind == NUMBER
+             and not c.is_identifier and c.formula is None]
+    for parent in named:
+        for child in named:
+            if (child.table != parent.table and schema.countable(parent.table) and schema.countable(child.table)
+                    and schema.one_to_many(parent.table, child.table)):
+                from intentsql.intent import column_phrase
+                proposals.append(("minus_sum", parent.key, child.key,
+                                  f"{parent.label} left after the total {column_phrase(schema, child.key)}"))
     return proposals
 
 
